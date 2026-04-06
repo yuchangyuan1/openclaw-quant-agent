@@ -1,0 +1,161 @@
+{
+  "agents": {
+    "defaults": {
+      "model": "gpt-5.4-mini",
+      "tools": {
+        "profile": "coding"
+      },
+      "subagents": {
+        "maxSpawnDepth": 2,
+        "maxChildrenPerAgent": 6,
+        "maxConcurrent": 8,
+        "runTimeoutSeconds": 900
+      }
+    },
+    "list": [
+      {
+        "id": "planner",
+        "default": true,
+        "agentDir": "./agents/planner",
+        "workspace": "~/.openclaw/workspace-planner"
+      },
+      {
+        "id": "knowledge",
+        "agentDir": "./agents/knowledge",
+        "workspace": "~/.openclaw/workspace-knowledge",
+        "tools": {
+          "allow": ["read", "web_search", "web_fetch", "sessions_history"],
+          "deny": ["exec", "apply_patch"]
+        }
+      },
+      {
+        "id": "quant",
+        "agentDir": "./agents/quant",
+        "workspace": "~/.openclaw/workspace-quant",
+        "sandbox": {
+          "mode": "all",
+          "scope": "agent"
+        }
+      },
+      {
+        "id": "risk",
+        "agentDir": "./agents/risk",
+        "workspace": "~/.openclaw/workspace-risk",
+        "sandbox": {
+          "mode": "all",
+          "scope": "agent"
+        }
+      },
+      {
+        "id": "report",
+        "agentDir": "./agents/report",
+        "workspace": "~/.openclaw/workspace-report"
+      },
+      {
+        "id": "critic",
+        "agentDir": "./agents/critic",
+        "workspace": "~/.openclaw/workspace-critic",
+        "tools": {
+          "allow": ["read", "sessions_history"],
+          "deny": ["exec", "write", "apply_patch"]
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agentId": "planner",
+      "match": {
+        "channel": "feishu",
+        "accountId": "default"
+      }
+    }
+  ],
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "defaultAccount": "default",
+      "accounts": {
+        "default": {
+          "appId": "${FEISHU_APP_ID}",
+          "appSecret": "${FEISHU_APP_SECRET}",
+          "name": "量化投研助手"
+        }
+      },
+      "streaming": true,
+      "blockStreaming": true
+    }
+  },
+  "cron": {
+    "enabled": true,
+    "maxConcurrentRuns": 1,
+    "timezone": "Asia/Shanghai",
+    "jobs": [
+      {
+        "id": "daily_report",
+        "schedule": "15 8 * * 1-5",
+        "agentId": "planner",
+        "message": "【定时任务】请生成今日投研日报。今日日期：{{date}}，请按标准流程触发采集→Knowledge→Quant→Risk→Report→Critic→飞书推送。",
+        "description": "工作日 08:15 触发日报生成"
+      },
+      {
+        "id": "weekly_report",
+        "schedule": "0 8 * * 1",
+        "agentId": "planner",
+        "message": "【定时任务】请生成本周投研周报。本周区间：{{week_start}} 至 {{week_end}}，请汇总本周日报数据生成周报并推送飞书。",
+        "description": "每周一 08:00 触发周报生成"
+      },
+      {
+        "id": "evening_data_fetch",
+        "schedule": "30 16 * * 1-5",
+        "agentId": "planner",
+        "message": "【定时任务】触发目标股票池收盘增量采集：请优先调用 ingestion 的 target-pool incremental sync，拉取目标股票池今日公告、新闻与收盘相关数据，并更新 Quant 数据仓。",
+        "description": "工作日 16:30 收盘数据采集"
+      },
+      {
+        "id": "morning_target_pool_sync",
+        "schedule": "35 8 * * 1-5",
+        "agentId": "planner",
+        "message": "【定时任务】执行目标股票池晨间增量采集：调用 ingestion 的 target-pool incremental sync，重点补采 all_news 与 all_announcements，覆盖开盘前的新增公告和新闻。",
+        "description": "工作日 08:35 目标股票池晨间增量采集"
+      },
+      {
+        "id": "midday_target_pool_sync",
+        "schedule": "35 12 * * 1-5",
+        "agentId": "planner",
+        "message": "【定时任务】执行目标股票池午间增量采集：调用 ingestion 的 target-pool incremental sync，补采午间新增公告和新闻，保持目标股票池语料最新。",
+        "description": "工作日 12:35 目标股票池午间增量采集"
+      }
+    ]
+  },
+  "services": {
+    "ingestion": {
+      "baseUrl": "http://localhost:8001",
+      "timeoutSeconds": 30
+    },
+    "rag": {
+      "baseUrl": "http://localhost:8002",
+      "timeoutSeconds": 10
+    },
+    "quant": {
+      "baseUrl": "http://localhost:8003",
+      "timeoutSeconds": 30
+    },
+    "risk": {
+      "baseUrl": "http://localhost:8004",
+      "timeoutSeconds": 30
+    },
+    "planner": {
+      "baseUrl": "http://localhost:8005",
+      "timeoutSeconds": 20
+    },
+    "report": {
+      "baseUrl": "http://localhost:8006",
+      "timeoutSeconds": 20
+    },
+    "critic": {
+      "baseUrl": "http://localhost:8007",
+      "timeoutSeconds": 20
+    }
+  }
+}

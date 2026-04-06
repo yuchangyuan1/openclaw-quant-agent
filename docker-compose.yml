@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: quant_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: quant_research
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_schema.sql:/docker-entrypoint-initdb.d/01_init_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant -d quant_research"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: quant_chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/.chroma
+    environment:
+      CHROMA_SERVER_AUTHN_PROVIDER: ""
+      ANONYMIZED_TELEMETRY: "false"
+    healthcheck:
+      disable: true
+
+  adminer:
+    image: adminer:latest
+    container_name: quant_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: quant_postgres_data
+  chroma_data:
+    name: quant_chroma_data
