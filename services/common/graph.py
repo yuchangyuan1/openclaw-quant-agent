@@ -12,7 +12,6 @@ from .repository import _connect, _load_manifest
 from .stocks import build_company_aliases, load_target_stocks, normalize_company_term
 from .text import stable_uuid
 
-
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 
@@ -563,24 +562,50 @@ class GraphRepository:
     def _load_manifest(self) -> dict[str, Any]:
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
         if not self._manifest_path.exists():
-            return {
-                "entities": [],
-                "relations": [],
-                "document_entities": [],
-                "metric_snapshots": [],
-                "risk_snapshots": [],
-            }
-        state = json.loads(self._manifest_path.read_text(encoding="utf-8"))
+            return _empty_manifest_state()
+        raw_text = self._manifest_path.read_text(encoding="utf-8")
+        state = _safe_load_manifest_text(raw_text)
         state.setdefault("entities", [])
         state.setdefault("relations", [])
         state.setdefault("document_entities", [])
         state.setdefault("metric_snapshots", [])
         state.setdefault("risk_snapshots", [])
+        if json.dumps(state, ensure_ascii=False, indent=2) != raw_text.strip():
+            self._save_manifest(state)
         return state
 
     def _save_manifest(self, state: dict[str, Any]) -> None:
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
         self._manifest_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _empty_manifest_state() -> dict[str, Any]:
+    return {
+        "entities": [],
+        "relations": [],
+        "document_entities": [],
+        "metric_snapshots": [],
+        "risk_snapshots": [],
+    }
+
+
+def _safe_load_manifest_text(raw_text: str) -> dict[str, Any]:
+    content = raw_text.strip()
+    if not content:
+        return _empty_manifest_state()
+
+    decoder = json.JSONDecoder()
+    try:
+        state = json.loads(content)
+    except json.JSONDecodeError:
+        try:
+            state, _ = decoder.raw_decode(content)
+        except json.JSONDecodeError:
+            return _empty_manifest_state()
+
+    if not isinstance(state, dict):
+        return _empty_manifest_state()
+    return state
 
 
 def extract_document_graph(document: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:

@@ -3,7 +3,7 @@ Risk 服务 Stub 实现（阶段 0）
 阶段 2 替换为真实的风险指标计算。
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_scenarios: bool) -> dict:
@@ -30,7 +30,7 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
             "2018_trade_war": -0.12,
             "2022_russia_ukraine": -0.08,
         },
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
     }
 
 

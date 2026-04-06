@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
 
 import chromadb
 
 from services.common.text import hashed_embedding, stable_uuid
 
 from . import config
-
 
 _LAST_STATUS = {
     "backend": "unknown",
@@ -117,7 +115,7 @@ def query(
     query_text: str,
     top_k: int = config.TOP_K_DEFAULT,
     collection_name: str = config.COLLECTION_NAME,
-    where: Optional[dict] = None,
+    where: dict | None = None,
 ) -> list[dict]:
     try:
         collection = get_or_create_collection(collection_name)

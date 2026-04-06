@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from services.common.paths import raw_data_dir
@@ -12,7 +12,6 @@ from services.common.text import sha256_hexdigest, stable_uuid
 
 from . import providers
 from .state import IngestionTaskRepository
-
 
 _SOURCE_GROUPS = {
     "all": ["eastmoney_news", "10jqka", "sina", "announcement", "sse", "szse"],
@@ -337,4 +336,4 @@ def _update_job(job_id: str, **fields) -> None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat()
+    return datetime.now(UTC).astimezone().isoformat()

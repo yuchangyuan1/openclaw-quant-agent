@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, Query
 
@@ -49,10 +48,10 @@ def get_status(job_id: str) -> ApiResponse:
 
 @router.get("/api/v1/documents")
 def list_documents(
-    date: Optional[str] = Query(None),
-    source: Optional[str] = Query(None),
-    stock_code: Optional[str] = Query(None),
-    doc_type: Optional[str] = Query(None),
+    date: str | None = Query(None),
+    source: str | None = Query(None),
+    stock_code: str | None = Query(None),
+    doc_type: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> ApiResponse:

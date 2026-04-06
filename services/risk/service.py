@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 
 from services.common.graph import GraphRepository
 from services.common.paths import metadata_dir
 from services.common.stocks import load_target_stocks
-from services.quant.market_data import benchmark_returns, compute_drawdown_metrics, portfolio_returns
+from services.quant.market_data import (
+    benchmark_returns,
+    compute_drawdown_metrics,
+    portfolio_returns,
+)
 
 _GRAPH_REPO = GraphRepository(metadata_dir() / "graph_manifest.json")
 
@@ -38,7 +42,7 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
             "industry_breakdown": [],
             "alerts": alerts + ["未找到可用的历史行情数据，风险结果仅返回空壳结构。"],
             "scenario_loss_estimate": {},
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     cumulative = (1 + returns.fillna(0.0)).cumprod()
@@ -95,7 +99,7 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
         "industry_breakdown": industry_breakdown,
         "alerts": alerts,
         "scenario_loss_estimate": scenario_loss,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
     }
 
 

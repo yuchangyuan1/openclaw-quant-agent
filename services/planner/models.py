@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,19 +13,19 @@ class PlannerClassifyRequest(BaseModel):
 
 
 class PlannerDailyReportRequest(BaseModel):
-    report_date: Optional[str] = None
+    report_date: str | None = None
     stock_codes: list[str] = Field(default_factory=list)
 
 
 class PlannerWeeklyReportRequest(BaseModel):
-    report_date: Optional[str] = None
+    report_date: str | None = None
     stock_codes: list[str] = Field(default_factory=list)
 
 
 class PlannerRunLogsRequest(BaseModel):
     limit: int = 20
-    job_type: Optional[str] = None
-    status: Optional[str] = None
+    job_type: str | None = None
+    status: str | None = None
 
 
 class PlannerReplayRunRequest(BaseModel):
@@ -39,6 +38,6 @@ class PlannerAlertSummaryRequest(BaseModel):
 
 class ApiResponse(BaseModel):
     success: bool
-    data: Optional[dict] = None
-    error: Optional[str] = None
+    data: dict | None = None
+    error: str | None = None
     timestamp: datetime = datetime.now()

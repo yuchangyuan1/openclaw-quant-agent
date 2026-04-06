@@ -1,4 +1,8 @@
-from services.rag.knowledge_pipeline import build_evidence_pack, build_query_variants, synthesize_answer
+from services.rag.knowledge_pipeline import (
+    build_evidence_pack,
+    build_query_variants,
+    synthesize_answer,
+)
 
 
 def test_build_query_variants_keeps_base_query():

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def review_report(
@@ -44,7 +44,7 @@ def review_report(
         "timeliness_check": timeliness,
         "consistency_check": consistency,
         "summary": _summary(status, warnings, errors),
-        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "checked_at": datetime.now(UTC).isoformat(),
     }
 
 

@@ -1,4 +1,8 @@
-from services.common.stocks import extract_company_terms, matches_company_terms, normalize_company_term
+from services.common.stocks import (
+    extract_company_terms,
+    matches_company_terms,
+    normalize_company_term,
+)
 
 
 def test_normalize_company_term_strips_corporate_suffix():

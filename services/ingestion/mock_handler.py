@@ -4,7 +4,7 @@ Ingestion 服务 Stub 实现（阶段 0）
 阶段 1 实现真实采集逻辑后，替换此文件，router.py 不变。
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def trigger_ingest(source: str, date: str | None, stock_codes: list[str]) -> dict:

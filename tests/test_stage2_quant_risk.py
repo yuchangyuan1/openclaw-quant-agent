@@ -3,8 +3,8 @@ from fastapi.testclient import TestClient
 from services.quant import market_data as quant_market_data
 from services.quant import service as quant_service
 from services.quant.fundamentals import FundamentalSnapshot
-from services.risk import service as risk_service
 from services.quant.main import app as quant_app
+from services.risk import service as risk_service
 from services.risk.main import app as risk_app
 
 

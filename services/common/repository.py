@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 
 from .paths import PROJECT_ROOT, metadata_dir
 from .stocks import load_target_stocks
-
 
 load_dotenv(PROJECT_ROOT / ".env")
 

@@ -8,7 +8,6 @@ from services.common.paths import metadata_dir
 from .akshare_fetcher import fetch_daily_hist, save_to_parquet
 from .market_data import build_snapshot, compute_factor_payload, load_price_history, market_data_dir
 
-
 _GRAPH_REPO = GraphRepository(metadata_dir() / "graph_manifest.json")
 
 

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import date
 from dataclasses import dataclass
+from datetime import date
 
 from services.common.stocks import extract_company_terms, load_target_stocks
 from services.rag.service import build_index
 
-from .collaboration import run_knowledge_agent, run_parallel_collaboration, run_quant_agent, run_risk_agent
+from .collaboration import (
+    run_knowledge_agent,
+    run_parallel_collaboration,
+    run_quant_agent,
+    run_risk_agent,
+)
 from .report_pipeline import execute_daily_report, execute_weekly_report
 
 

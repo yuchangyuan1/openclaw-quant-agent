@@ -6,7 +6,6 @@ import re
 import uuid
 from collections import Counter
 
-
 _TOKEN_RE = re.compile(r"[\u4e00-\u9fff]+|[A-Za-z0-9]+")
 _SPACE_RE = re.compile(r"\s+")
 

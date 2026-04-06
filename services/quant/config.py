@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 from services.common.paths import PROJECT_ROOT
 
-
 load_dotenv(PROJECT_ROOT / ".env")
 
 PORT = int(os.getenv("QUANT_PORT", "8003"))

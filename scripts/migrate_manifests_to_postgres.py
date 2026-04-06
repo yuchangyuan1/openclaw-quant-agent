@@ -10,9 +10,9 @@ from psycopg2.extras import Json
 
 from services.common.audit import _manifest_path as run_log_manifest_path
 from services.common.paths import metadata_dir, reports_dir
-from services.common.repository import _connect, _manifest_path as document_manifest_path
+from services.common.repository import _connect
+from services.common.repository import _manifest_path as document_manifest_path
 from services.common.stocks import load_target_stocks
-
 
 load_dotenv()
 

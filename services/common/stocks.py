@@ -5,7 +5,6 @@ from functools import lru_cache
 
 from .paths import PROJECT_ROOT
 
-
 TARGET_STOCKS_PATH = PROJECT_ROOT / "docs" / "target-stocks.md"
 _TABLE_ROW_RE = re.compile(r"^\|\s*(\d{6})\.(?:SH|SZ)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|")
 _THEME_HEADER_RE = re.compile(r"^###\s+主题\s*\d+[:：]\s*(.+?)\s*$")

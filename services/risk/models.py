@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -34,8 +34,8 @@ class RiskOutput(BaseModel):
     risk_level: str                        # LOW | MEDIUM | HIGH | CRITICAL
     max_drawdown_90d: float
     volatility_annual: float
-    beta: Optional[float] = None
-    top_industry_exposure: Optional[IndustryExposure] = None
+    beta: float | None = None
+    top_industry_exposure: IndustryExposure | None = None
     industry_breakdown: list[IndustryExposure] = []
     alerts: list[str] = []
     scenario_loss_estimate: dict[str, float] = {}
@@ -44,6 +44,6 @@ class RiskOutput(BaseModel):
 
 class ApiResponse(BaseModel):
     success: bool
-    data: Optional[dict] = None
-    error: Optional[str] = None
+    data: dict | None = None
+    error: str | None = None
     timestamp: datetime = datetime.now()

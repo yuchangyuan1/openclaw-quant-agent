@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from services.common.audit import RunLogRepository
@@ -357,7 +357,7 @@ def _run_step(func: Callable[[], Any], attempts: int = 2) -> tuple[Any, int]:
 
 
 def _build_job_id(job_type: str, report_date: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     return f"{job_type}:{report_date}:{stamp}"
 
 

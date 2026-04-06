@@ -12,7 +12,6 @@ from services.common.text import build_snippet, chunk_text, normalize_text, toke
 
 from . import chroma_client
 
-
 _REPO = DocumentRepository()
 _GRAPH_REPO = GraphRepository(metadata_dir() / "graph_manifest.json")
 
@@ -156,7 +155,7 @@ def retrieve(
 def _load_raw(document: dict) -> dict:
     if not document.get("file_path"):
         return {}
-    with open(document["file_path"], "r", encoding="utf-8") as handle:
+    with open(document["file_path"], encoding="utf-8") as handle:
         return json.load(handle)
 
 

@@ -14,7 +14,6 @@ from . import config
 from .akshare_fetcher import fetch_daily_hist, save_to_parquet
 from .fundamentals import build_industry_comparison, load_fundamental_snapshot
 
-
 TRADING_DAYS_PER_YEAR = 252
 
 

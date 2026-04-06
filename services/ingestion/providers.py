@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 from services.common.stocks import build_research_metadata, match_company_code
 from services.common.text import normalize_text
 
-
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"

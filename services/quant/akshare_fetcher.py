@@ -10,7 +10,6 @@ Akshare 行情数据获取模块（阶段 0 唯一真实实现）
 import time
 from datetime import date
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -48,7 +47,7 @@ def filter_by_date(df: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
 def fetch_daily_hist(
     code: str,
     start: str,
-    end: Optional[str] = None,
+    end: str | None = None,
     adjust: str = "qfq",
 ) -> pd.DataFrame:
     """
@@ -106,7 +105,7 @@ def fetch_daily_hist(
     return pd.DataFrame()
 
 
-def save_to_parquet(df: pd.DataFrame, code: str, data_dir: Optional[str] = None) -> Path:
+def save_to_parquet(df: pd.DataFrame, code: str, data_dir: str | None = None) -> Path:
     """
     将 DataFrame 保存为 Parquet 文件。
 
@@ -122,7 +121,7 @@ def save_to_parquet(df: pd.DataFrame, code: str, data_dir: Optional[str] = None)
 def fetch_all_targets(
     codes: list[str],
     start: str,
-    end: Optional[str] = None,
+    end: str | None = None,
     delay: float = config.AKSHARE_DELAY,
 ) -> dict[str, pd.DataFrame]:
     """
@@ -141,7 +140,7 @@ def fetch_all_targets(
     return results
 
 
-def get_latest_close(code: str) -> Optional[float]:
+def get_latest_close(code: str) -> float | None:
     """从本地 Parquet 文件读取最新收盘价（避免重复 API 调用）。"""
     parquet_path = Path(config.MARKET_DATA_DIR) / f"{code}_daily.parquet"
     if not parquet_path.exists():

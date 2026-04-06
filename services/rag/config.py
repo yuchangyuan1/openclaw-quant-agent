@@ -1,8 +1,8 @@
 import os
+
 from dotenv import load_dotenv
 
-from services.common.paths import data_dir
-from services.common.paths import PROJECT_ROOT
+from services.common.paths import PROJECT_ROOT, data_dir
 
 load_dotenv(PROJECT_ROOT / ".env")
 

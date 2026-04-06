@@ -23,8 +23,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from services.quant.akshare_fetcher import fetch_daily_hist
-
 # 5 只代表性股票（覆盖 4 个板块）
 TARGET_STOCKS = [
     ("600519", "贵州茅台", "食品饮料"),
@@ -41,6 +39,8 @@ START_DATE = END_DATE - timedelta(days=365)
 
 def fetch_stock(code: str, name: str) -> pd.DataFrame | None:
     try:
+        from services.quant.akshare_fetcher import fetch_daily_hist
+
         return fetch_daily_hist(
             code=code,
             start=START_DATE.strftime("%Y%m%d"),

@@ -15,7 +15,6 @@ from services.common.stocks import load_target_stocks
 from . import config
 from .akshare_fetcher import get_latest_close
 
-
 _FALSE_LIKE = {"", "--", "nan", "none", "null", "false", "False", "不适用"}
 _UNIT_MULTIPLIERS = {
     "万亿": 1_000_000_000_000,
@@ -56,7 +55,7 @@ class FundamentalSnapshot:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "FundamentalSnapshot":
+    def from_dict(cls, payload: dict[str, Any]) -> FundamentalSnapshot:
         return cls(**payload)
 
 

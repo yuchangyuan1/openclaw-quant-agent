@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -13,6 +12,6 @@ class CriticReviewRequest(BaseModel):
 
 class ApiResponse(BaseModel):
     success: bool
-    data: Optional[dict] = None
-    error: Optional[str] = None
+    data: dict | None = None
+    error: str | None = None
     timestamp: datetime = datetime.now()

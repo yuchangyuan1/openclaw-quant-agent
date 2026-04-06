@@ -18,7 +18,6 @@ def build_query_variants(question: str, stock_codes: list[str] | None = None) ->
         variants.append(f"{name} 最新动态")
         variants.append(f"{code} 公告 新闻")
 
-    lowered = base.lower()
     if "公告" not in base:
         variants.append(f"{base} 公告")
     if "新闻" not in base and "最新" not in base:

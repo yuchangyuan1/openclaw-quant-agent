@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from services.ingestion.main import app as ingestion_app
 from services.ingestion import service
+from services.ingestion.main import app as ingestion_app
 from services.ingestion.state import IngestionTaskRepository
 
 
