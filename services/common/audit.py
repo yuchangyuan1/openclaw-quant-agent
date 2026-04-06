@@ -78,6 +78,10 @@ class RunLogRepository:
         return self._get_manifest(run_id)
 
     def _probe_backend(self) -> None:
+        if os.getenv("RUN_LOG_MANIFEST_PATH"):
+            self._backend = "manifest"
+            self._checked_backend = True
+            return
         try:
             with _connect() as conn:
                 with conn.cursor() as cursor:

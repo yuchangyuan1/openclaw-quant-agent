@@ -146,13 +146,16 @@ openclaw-proj/
 │   ├── rag/                # 切分、索引、检索 API（voyage-finance-2 embedding，rerank-2.5 rerank）
 │   ├── quant/              # Akshare 接入、指标/因子计算脚本
 │   └── risk/               # 风险引擎 HTTP 服务（独立部署）
-├── agents/
-│   ├── planner/            # Planner Agent 指令与工具配置
-│   ├── knowledge/          # Knowledge Agent
-│   ├── quant/              # Quant Agent
-│   ├── risk/               # Risk Agent
-│   ├── report/             # Report Agent
-│   └── critic/             # Critic Agent
+├── openclaw/
+│   ├── workspaces/
+│   │   ├── planner/        # Planner Workspace
+│   │   ├── knowledge/      # Knowledge Workspace
+│   │   ├── quant/          # Quant Workspace
+│   │   ├── risk/           # Risk Workspace
+│   │   ├── report/         # Report Workspace
+│   │   └── critic/         # Critic Workspace
+│   ├── skills/             # Shared service invocation skills
+│   └── runtime/            # OpenClaw runtime bootstrap and sync helpers
 ├── openclaw.config.json    # OpenClaw 配置（见上方参考）
 ├── templates/
 │   ├── daily_report.md     # 日报模板

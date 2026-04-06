@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-OpenClaw Quant Research is a multi-agent equity research system built on top of OpenClaw.  
+OpenClaw Quant Research is a multi-agent equity research system built on top of OpenClaw.
 It is designed for public-market research workflows rather than live trading.
 
 The system combines:
@@ -23,6 +23,11 @@ The current implementation is a working MVP with a complete local workflow:
 - `risk` for portfolio and drawdown analysis
 - `report` for daily and weekly report generation
 - `critic` for report validation
+
+The repository now separates:
+
+- shared business services in `services/`
+- OpenClaw-native orchestration assets in `openclaw/workspaces/` and `openclaw/skills/`
 
 ## Project Architecture
 
@@ -142,18 +147,25 @@ Currently supported:
 ## Repository Structure
 
 ```text
-agents/       OpenClaw agent instructions
 services/     FastAPI services and business logic
 scripts/      setup, sync, validation, and demo scripts
 docs/         plans, architecture, and project documentation
 templates/    daily and weekly report templates
 tests/        regression and smoke tests
 data/         local runtime data and generated artifacts
+openclaw/     OpenClaw-native workspaces, skills, and runtime helpers
 ```
 
 ## Usage
 
-### 1. Environment Setup
+### Prerequisites
+
+- Python 3.11+
+- Docker Desktop
+- PowerShell on Windows
+- Optional: OpenClaw CLI and Feishu credentials for message-channel testing
+
+### 1. Clone and Configure
 
 Copy the environment template:
 
@@ -161,91 +173,139 @@ Copy the environment template:
 Copy-Item .env.example .env
 ```
 
-### 2. Start Infrastructure
+Then edit `.env` and at least confirm:
 
-Start Postgres and Chroma:
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- optional model keys only if you want live provider integration
+- optional Feishu/OpenClaw values only if you want channel testing
+
+### 2. Bootstrap the Project
+
+For a new machine, the fastest path is:
 
 ```powershell
-docker compose up -d postgres chroma
+powershell -ExecutionPolicy Bypass -File .\scripts\dev_bootstrap.ps1
 ```
 
-### 3. Initialize the Database
+This command will:
+
+- start `postgres`, `chroma`, and `adminer`
+- initialize the database schema
+- fetch sample market data
+- verify the storage stack
+- run the smoke test suite
+
+Optional bootstrap flags:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev_bootstrap.ps1 -SyncOpenClaw -StartServices
+```
+
+### 3. Start the Full Docker Stack
+
+If you want the infrastructure and all seven API services in containers:
+
+```powershell
+docker compose up -d
+```
+
+This will start:
+
+- `postgres`
+- `chroma`
+- `adminer`
+- `ingestion`
+- `rag`
+- `quant`
+- `risk`
+- `planner`
+- `report`
+- `critic`
+
+To stop the full container stack:
+
+```powershell
+docker compose down
+```
+
+### 4. Start Local API Services Without Containers
+
+Start all seven local services:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev_up.ps1
+```
+
+Stop them later with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev_down.ps1
+```
+
+Use this mode when you want Docker only for infrastructure and Python processes for the API layer.
+
+### 5. Manual Infrastructure Commands
+
+If you want to run the steps separately instead of using `dev_bootstrap.ps1`:
+
+```powershell
+docker compose up -d postgres chroma adminer
 python scripts/init_db.py
-```
-
-### 4. Verify the Stack
-
-```powershell
-python scripts/verify_stack.py
 python scripts/fetch_sample_data.py
+python scripts/verify_stack.py
 python scripts/run_phase0_smoke.py
 ```
 
-### 5. Run the Planner Service
+### 6. Run the Planner Service Manually
+
+If you only want the planner service without the one-click launcher:
 
 ```powershell
 uvicorn services.planner.main:app --host 0.0.0.0 --port 8005
 ```
 
-Available planner endpoints:
-
-- `GET /health`
-- `POST /api/v1/planner/classify`
-- `POST /api/v1/planner/query`
-- `POST /api/v1/planner/run-logs`
-- `POST /api/v1/planner/run-logs/replay`
-- `POST /api/v1/planner/alerts/summary`
-
-### 6. Run Local Demos
-
-Planner:
+### 7. Run Local Demos
 
 ```powershell
 python .\scripts\call_planner_service.py "Recent announcements of Kweichow Moutai"
 python .\scripts\run_planner_demo.py "Recent announcements of Kweichow Moutai"
-```
-
-Knowledge:
-
-```powershell
 python .\scripts\run_knowledge_demo.py "Recent announcements of Kweichow Moutai" --stock-code 600519 --top-k 5
-```
-
-Quant:
-
-```powershell
 python .\scripts\run_quant_demo.py --stock-code 600519 --stock-code 300750 --mode daily
 python .\scripts\run_quant_demo.py --stock-code 600519 --factor pe_ttm --factor roe --factor revenue_growth --factor composite_score --mode factor
-```
-
-Risk:
-
-```powershell
 python .\scripts\run_risk_demo.py --holding 600519:0.4 --holding 300750:0.35 --holding 000001:0.25 --mode check
 python .\scripts\run_risk_demo.py --stock-code 600519 --stock-code 300750 --mode drawdown
-```
-
-Reports:
-
-```powershell
 python .\scripts\run_daily_report_demo.py --date 2026-04-05 --stock-code 600519 --stock-code 300750
 python .\scripts\run_weekly_report_demo.py --date 2026-04-05 --stock-code 600519 --stock-code 300750
 ```
 
-### 7. Sync OpenClaw Runtime
+### 8. Run Tests
+
+Fast local validation:
+
+```powershell
+python .\scripts\verify_stack.py
+python .\scripts\run_phase0_smoke.py
+```
+
+Full regression suite:
+
+```powershell
+pytest -q -p no:cacheprovider .\tests
+```
+
+### 9. Sync OpenClaw Runtime
 
 Sync the local OpenClaw runtime with this project:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_openclaw_runtime.ps1 -SkipCron -SkipGatewayRestart
+powershell -ExecutionPolicy Bypass -File .\openclaw\runtime\bootstrap.ps1 -SkipCron -SkipGatewayRestart
 ```
 
 To sync cron jobs as well:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_openclaw_runtime.ps1 -SkipGatewayRestart
+powershell -ExecutionPolicy Bypass -File .\openclaw\runtime\bootstrap.ps1 -SkipGatewayRestart
 ```
 
 To restart the OpenClaw gateway:
@@ -256,8 +316,13 @@ openclaw gateway restart
 
 ## Notes
 
+- The repository is structured so that another user can `git clone`, copy `.env.example` to `.env`, run `dev_bootstrap.ps1`, and use the project locally.
+- The repository also supports a full Docker-based API stack through `docker compose up -d`.
+- The one-click scripts manage local development workflows; they do not package Feishu credentials or your personal OpenClaw auth state.
 - Feishu is connected through the existing OpenClaw runtime.
 - The preferred online path is:
   - `Feishu -> OpenClaw Gateway -> Planner Agent -> call_planner_service.py -> planner HTTP service`
 - For stable Feishu behavior, the local planner service on `localhost:8005` must be running.
 - Chroma is used through HTTP first and falls back to local persistent storage if needed.
+- OpenClaw role definitions live under `openclaw/workspaces/`.
+- Shared service invocation contracts live under `openclaw/skills/`.

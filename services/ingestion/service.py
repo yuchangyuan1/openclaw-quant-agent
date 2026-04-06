@@ -83,6 +83,9 @@ def trigger_ingest(
             lookback_days,
             per_stock_limit,
             resolved_task_name,
+            _TASK_REPO,
+            _persist_article,
+            providers.fetch_documents,
         ),
         daemon=True,
         name=f"ingestion-{job_id}",
@@ -168,14 +171,20 @@ def _run_job(
     lookback_days: int,
     per_stock_limit: int,
     task_name: str,
+    task_repo: IngestionTaskRepository | None = None,
+    persist_article_func=None,
+    fetch_documents_func=None,
 ) -> None:
+    task_repo = task_repo or _TASK_REPO
+    persist_article = persist_article_func or _persist_article
+    fetch_documents = fetch_documents_func or providers.fetch_documents
     _update_job(job_id, status="running", started_at=_now_iso())
     docs_collected = 0
     docs_failed = 0
     source_runs: list[dict] = []
 
     for selected_source in _resolve_sources(source):
-        date_from, date_to = _TASK_REPO.resolve_window(
+        date_from, date_to = task_repo.resolve_window(
             task_name=task_name,
             source=selected_source,
             explicit_date=date_str if not incremental else None,
@@ -186,7 +195,7 @@ def _run_job(
         source_failed = 0
         status = "completed"
         try:
-            articles = providers.fetch_documents(
+            articles = fetch_documents(
                 selected_source,
                 stock_codes,
                 date_from=date_from,
@@ -201,7 +210,7 @@ def _run_job(
 
         for article in articles:
             try:
-                if _persist_article(article):
+                if persist_article(article):
                     docs_collected += 1
                     source_collected += 1
             except Exception:
@@ -218,7 +227,7 @@ def _run_job(
             "docs_failed": source_failed,
         }
         source_runs.append(source_run)
-        _TASK_REPO.record_run(
+        task_repo.record_run(
             task_name=task_name,
             job_id=job_id,
             source=selected_source,

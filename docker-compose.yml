@@ -1,3 +1,32 @@
+x-app-base: &app-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+    POSTGRES_DB: quant_research
+    POSTGRES_USER: quant
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant_dev_password}
+    DATABASE_URL: postgresql://quant:${POSTGRES_PASSWORD:-quant_dev_password}@postgres:5432/quant_research
+    CHROMA_HOST: chroma
+    CHROMA_PORT: 8000
+    DATA_DIR: /app/data
+    RAW_DATA_DIR: /app/data/raw
+    MARKET_DATA_DIR: /app/data/market
+    FUNDAMENTAL_DATA_DIR: /app/data/financials
+    REPORTS_DIR: /app/data/reports
+  volumes:
+    - ./data:/app/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+    chroma:
+      condition: service_started
+
 services:
   postgres:
     image: postgres:16
@@ -8,7 +37,7 @@ services:
     environment:
       POSTGRES_DB: quant_research
       POSTGRES_USER: quant
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant_dev_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init_schema.sql:/docker-entrypoint-initdb.d/01_init_schema.sql
@@ -41,6 +70,55 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  ingestion:
+    <<: *app-base
+    container_name: quant_ingestion
+    command: ["python", "-m", "uvicorn", "services.ingestion.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+
+  rag:
+    <<: *app-base
+    container_name: quant_rag
+    command: ["python", "-m", "uvicorn", "services.rag.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+
+  quant:
+    <<: *app-base
+    container_name: quant_quant
+    command: ["python", "-m", "uvicorn", "services.quant.main:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+
+  risk:
+    <<: *app-base
+    container_name: quant_risk
+    command: ["python", "-m", "uvicorn", "services.risk.main:app", "--host", "0.0.0.0", "--port", "8004"]
+    ports:
+      - "8004:8004"
+
+  planner:
+    <<: *app-base
+    container_name: quant_planner
+    command: ["python", "-m", "uvicorn", "services.planner.main:app", "--host", "0.0.0.0", "--port", "8005"]
+    ports:
+      - "8005:8005"
+
+  report:
+    <<: *app-base
+    container_name: quant_report
+    command: ["python", "-m", "uvicorn", "services.report.main:app", "--host", "0.0.0.0", "--port", "8006"]
+    ports:
+      - "8006:8006"
+
+  critic:
+    <<: *app-base
+    container_name: quant_critic
+    command: ["python", "-m", "uvicorn", "services.critic.main:app", "--host", "0.0.0.0", "--port", "8007"]
+    ports:
+      - "8007:8007"
 
 volumes:
   postgres_data:

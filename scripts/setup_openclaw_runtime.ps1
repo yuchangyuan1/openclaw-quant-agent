@@ -93,9 +93,34 @@ function New-WorkspaceBootstrap {
 Project code is available under `./project`.
 Use `./project` as the working tree for repository tasks.
 Keep workspace-local metadata in this directory only when needed.
+OpenClaw-native workspace materials are available under `./project/openclaw`.
+Reusable skills are documented under `./project/openclaw/skills`.
 "@
 
     Set-Content -LiteralPath (Join-Path $WorkspacePath "BOOTSTRAP.md") -Value $bootstrap -Encoding utf8
+}
+
+function Copy-WorkspaceScaffold {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceWorkspacePath,
+        [Parameter(Mandatory = $true)]
+        [string]$TargetWorkspacePath
+    )
+
+    if (-not (Test-Path -LiteralPath $SourceWorkspacePath)) {
+        throw "Missing workspace scaffold: $SourceWorkspacePath"
+    }
+
+    $sourceItems = Get-ChildItem -LiteralPath $SourceWorkspacePath -Force
+    foreach ($item in $sourceItems) {
+        if ($item.PSIsContainer) {
+            Copy-Item -LiteralPath $item.FullName -Destination $TargetWorkspacePath -Recurse -Force
+            continue
+        }
+        $destination = Join-Path $TargetWorkspacePath $item.Name
+        Copy-Item -LiteralPath $item.FullName -Destination $destination -Force
+    }
 }
 
 function Resolve-FeishuAccountId {
@@ -178,8 +203,8 @@ function Ensure-AgentWorkspaces {
 
     foreach ($agent in $AgentSpecs) {
         $workspacePath = Join-Path $WorkspaceRoot $agent.id
-        $sourcePrompt = Join-Path $ProjectRoot ("agents\" + $agent.id + "\AGENT.md")
-        $targetPrompt = Join-Path $workspacePath "AGENTS.md"
+        $sourceWorkspace = Join-Path $ProjectRoot ("openclaw\workspaces\" + $agent.id)
+        $sourcePrompt = Join-Path $sourceWorkspace "AGENTS.md"
         $projectLink = Join-Path $workspacePath "project"
 
         if (-not (Test-Path -LiteralPath $sourcePrompt)) {
@@ -187,7 +212,7 @@ function Ensure-AgentWorkspaces {
         }
 
         New-Item -ItemType Directory -Path $workspacePath -Force | Out-Null
-        Copy-Item -LiteralPath $sourcePrompt -Destination $targetPrompt -Force
+        Copy-WorkspaceScaffold -SourceWorkspacePath $sourceWorkspace -TargetWorkspacePath $workspacePath
         New-WorkspaceBootstrap -WorkspacePath $workspacePath
 
         if (Test-Path -LiteralPath $projectLink) {

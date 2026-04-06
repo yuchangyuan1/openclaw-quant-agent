@@ -39,14 +39,16 @@ class WeeklyReportResult:
     attempts: dict[str, int] | None = None
 
 
-_RUN_LOGS = RunLogRepository()
+def _run_logs() -> RunLogRepository:
+    return RunLogRepository()
 
 
 def execute_daily_report(report_date: str | None = None, stock_codes: list[str] | None = None) -> DailyReportResult:
+    run_logs = _run_logs()
     resolved_date = report_date or date.today().isoformat()
     selected_codes = stock_codes or _default_stock_codes()
     weights = _equal_weights(selected_codes)
-    run_record = _RUN_LOGS.start_run(
+    run_record = run_logs.start_run(
         job_id=_build_job_id("daily_report", resolved_date),
         job_type="daily_report",
         input_params={"report_date": resolved_date, "stock_codes": selected_codes},
@@ -92,7 +94,7 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
             )
         )
         finalized_report, attempts["finalize"] = _run_step(lambda: finalize_report_with_critic(report_payload, critic_payload))
-        _RUN_LOGS.finish_run(
+        run_logs.finish_run(
             run_record["id"],
             status="success",
             output_summary=_build_output_summary(
@@ -114,7 +116,7 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
             attempts=attempts,
         )
     except Exception as exc:
-        _RUN_LOGS.finish_run(
+        run_logs.finish_run(
             run_record["id"],
             status="failed",
             output_summary={"attempts": attempts},
@@ -124,11 +126,12 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
 
 
 def execute_weekly_report(report_date: str | None = None, stock_codes: list[str] | None = None) -> WeeklyReportResult:
+    run_logs = _run_logs()
     week_end = date.fromisoformat(report_date) if report_date else date.today()
     week_start = week_end - timedelta(days=6)
     selected_codes = stock_codes or _default_stock_codes()
     weights = _equal_weights(selected_codes)
-    run_record = _RUN_LOGS.start_run(
+    run_record = run_logs.start_run(
         job_id=_build_job_id("weekly_report", week_end.isoformat()),
         job_type="weekly_report",
         input_params={
@@ -187,7 +190,7 @@ def execute_weekly_report(report_date: str | None = None, stock_codes: list[str]
             )
         )
         finalized_report, attempts["finalize"] = _run_step(lambda: finalize_report_with_critic(report_payload, critic_payload))
-        _RUN_LOGS.finish_run(
+        run_logs.finish_run(
             run_record["id"],
             status="success",
             output_summary=_build_output_summary(
@@ -209,7 +212,7 @@ def execute_weekly_report(report_date: str | None = None, stock_codes: list[str]
             attempts=attempts,
         )
     except Exception as exc:
-        _RUN_LOGS.finish_run(
+        run_logs.finish_run(
             run_record["id"],
             status="failed",
             output_summary={"attempts": attempts},
@@ -219,11 +222,11 @@ def execute_weekly_report(report_date: str | None = None, stock_codes: list[str]
 
 
 def list_recent_runs(limit: int = 20, job_type: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
-    return _RUN_LOGS.list_runs(limit=limit, job_type=job_type, status=status)
+    return _run_logs().list_runs(limit=limit, job_type=job_type, status=status)
 
 
 def replay_run(run_id: str) -> dict[str, Any]:
-    run = _RUN_LOGS.get_run(run_id)
+    run = _run_logs().get_run(run_id)
     input_params = run.get("input_params") or {}
     if run["job_type"] == "daily_report":
         result = execute_daily_report(
