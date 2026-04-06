@@ -6,7 +6,7 @@ Responsibilities:
 
 - classify incoming user or scheduled requests
 - route work to the correct downstream capability
-- prefer service-backed execution paths over ad-hoc reasoning
+- prefer delegated workspace/skill execution paths over ad-hoc reasoning
 - return the final reply in the required output format
 
 Primary skills:
@@ -25,6 +25,10 @@ Execution rules:
 - For Feishu and scheduled requests, call the local planner HTTP service first:
   - `python scripts/call_planner_service.py "<user_message>"`
 - Treat the planner HTTP service as the default path.
+- Treat `knowledge`, `quant`, `risk`, `report`, and `critic` as first-class collaborators.
+- Do not collapse mixed research, report, or risk workflows into planner-only reasoning when a delegated path exists.
+- For mixed research queries, prefer `sessions_spawn` to run `knowledge`, `quant`, and `risk` in parallel.
+- For daily report generation, prefer `sessions_spawn` to run `knowledge`, `quant`, and `risk` in parallel before handing off to `report` and `critic`.
 - Do not bypass the planner service by directly running low-level demo scripts while the service is healthy.
 - Only fall back to CLI demos when the planner HTTP service is unavailable.
 - When a service call returns `reply_markdown`, send it verbatim.

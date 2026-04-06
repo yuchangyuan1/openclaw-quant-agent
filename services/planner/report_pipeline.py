@@ -9,12 +9,17 @@ from services.common.audit import RunLogRepository
 from services.common.paths import reports_dir
 from services.common.retry import call_with_retry
 from services.common.stocks import load_target_stocks
-from services.critic.service import review_report
 from services.quant.market_data import market_data_dir
-from services.quant.service import daily_summary
-from services.rag.knowledge_pipeline import build_evidence_pack
-from services.report.service import build_report, finalize_report_with_critic
-from services.risk.service import risk_check
+
+from .collaboration import (
+    finalize_report_stage,
+    run_critic_agent,
+    run_knowledge_agent,
+    run_parallel_collaboration,
+    run_quant_agent,
+    run_report_agent,
+    run_risk_agent,
+)
 
 
 @dataclass
@@ -26,6 +31,7 @@ class DailyReportResult:
     risk_payload: dict
     run_log_id: str | None = None
     attempts: dict[str, int] | None = None
+    collaboration_agents: list[str] | None = None
 
 
 @dataclass
@@ -37,6 +43,7 @@ class WeeklyReportResult:
     risk_payload: dict
     run_log_id: str | None = None
     attempts: dict[str, int] | None = None
+    collaboration_agents: list[str] | None = None
 
 
 def _run_logs() -> RunLogRepository:
@@ -56,64 +63,86 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
     attempts: dict[str, int] = {}
 
     try:
-        evidence_payload, attempts["knowledge"] = _run_step(
-            lambda: build_evidence_pack(
-                question="A股最新公告和新闻",
-                stock_codes=selected_codes,
-                doc_types=["news", "announcement"],
-                days=7,
-                top_k=5,
-                min_score=0.1,
-            )
+        initial_results = run_parallel_collaboration(
+            {
+                "knowledge": lambda: run_knowledge_agent(
+                    question="A股最新公告和新闻",
+                    stock_codes=selected_codes,
+                    doc_types=["news", "announcement"],
+                    days=7,
+                    top_k=5,
+                    min_score=0.1,
+                ),
+                "quant": lambda: run_quant_agent(stock_codes=selected_codes, report_date=resolved_date, indicators=[]),
+                "risk": lambda: run_risk_agent(
+                    portfolio=[{"code": code, "weight": weight} for code, weight in weights.items()],
+                    benchmark="000300",
+                    lookback_days=90,
+                    run_scenarios=True,
+                ),
+            }
         )
-        quant_payload, attempts["quant"] = _run_step(lambda: daily_summary(selected_codes, resolved_date, indicators=[]))
-        risk_payload, attempts["risk"] = _run_step(
-            lambda: risk_check(
-                portfolio=[{"code": code, "weight": weight} for code, weight in weights.items()],
-                benchmark="000300",
-                lookback_days=90,
-                run_scenarios=True,
-            )
-        )
-        report_payload, attempts["report"] = _run_step(
-            lambda: build_report(
+        knowledge_result = initial_results["knowledge"]
+        quant_result = initial_results["quant"]
+        risk_result = initial_results["risk"]
+        attempts["knowledge"] = 1
+        attempts["quant"] = 1
+        attempts["risk"] = 1
+        report_result, attempts["report"] = _run_step(
+            lambda: run_report_agent(
                 report_type="daily",
                 report_date=resolved_date,
-                evidence_payload=evidence_payload,
-                quant_payload=quant_payload,
-                risk_payload=risk_payload,
+                evidence_payload=knowledge_result.payload,
+                quant_payload=quant_result.payload,
+                risk_payload=risk_result.payload,
                 critic_status="PENDING",
             )
         )
-        critic_payload, attempts["critic"] = _run_step(
-            lambda: review_report(
-                report_payload=report_payload,
-                evidence_payload=evidence_payload,
-                quant_payload=quant_payload,
-                risk_payload=risk_payload,
+        critic_result, attempts["critic"] = _run_step(
+            lambda: run_critic_agent(
+                report_payload=report_result.payload,
+                evidence_payload=knowledge_result.payload,
+                quant_payload=quant_result.payload,
+                risk_payload=risk_result.payload,
             )
         )
-        finalized_report, attempts["finalize"] = _run_step(lambda: finalize_report_with_critic(report_payload, critic_payload))
+        finalized_result, attempts["finalize"] = _run_step(
+            lambda: finalize_report_stage(
+                report_payload=report_result.payload,
+                critic_payload=critic_result.payload,
+            )
+        )
+
+        collaboration_agents = [
+            "planner",
+            knowledge_result.agent_id,
+            quant_result.agent_id,
+            risk_result.agent_id,
+            report_result.agent_id,
+            critic_result.agent_id,
+        ]
         run_logs.finish_run(
             run_record["id"],
             status="success",
             output_summary=_build_output_summary(
-                report_payload=finalized_report,
-                critic_payload=critic_payload,
-                evidence_payload=evidence_payload,
-                quant_payload=quant_payload,
-                risk_payload=risk_payload,
+                report_payload=finalized_result.payload,
+                critic_payload=critic_result.payload,
+                evidence_payload=knowledge_result.payload,
+                quant_payload=quant_result.payload,
+                risk_payload=risk_result.payload,
                 attempts=attempts,
+                collaboration_agents=collaboration_agents,
             ),
         )
         return DailyReportResult(
-            report_payload=finalized_report,
-            critic_payload=critic_payload,
-            evidence_payload=evidence_payload,
-            quant_payload=quant_payload,
-            risk_payload=risk_payload,
+            report_payload=finalized_result.payload,
+            critic_payload=critic_result.payload,
+            evidence_payload=knowledge_result.payload,
+            quant_payload=quant_result.payload,
+            risk_payload=risk_result.payload,
             run_log_id=run_record["id"],
             attempts=attempts,
+            collaboration_agents=collaboration_agents,
         )
     except Exception as exc:
         run_logs.finish_run(
@@ -157,59 +186,82 @@ def execute_weekly_report(report_date: str | None = None, stock_codes: list[str]
         evidence_payload, attempts["knowledge"] = _run_step(
             lambda: _build_weekly_evidence_payload(archived_reports, week_start, week_end, selected_codes)
         )
-        quant_payload, attempts["quant"] = _run_step(lambda: daily_summary(selected_codes, week_end.isoformat(), indicators=[]))
-        quant_payload = dict(quant_payload)
+        initial_results = run_parallel_collaboration(
+            {
+                "quant": lambda: run_quant_agent(stock_codes=selected_codes, report_date=week_end.isoformat(), indicators=[]),
+                "risk": lambda: run_risk_agent(
+                    portfolio=[{"code": code, "weight": weight} for code, weight in weights.items()],
+                    benchmark="000300",
+                    lookback_days=90,
+                    run_scenarios=True,
+                ),
+            }
+        )
+        quant_result = initial_results["quant"]
+        risk_result = initial_results["risk"]
+        attempts["knowledge"] = 1
+        attempts["quant"] = 1
+        attempts["risk"] = 1
+        quant_payload = dict(quant_result.payload)
         market_summary = dict(quant_payload.get("market_summary", {}))
         market_summary["data_source"] = f"{len(archived_reports)}份日报归档 + 周末量化快照"
         quant_payload["market_summary"] = market_summary
         quant_payload["style_rotation"] = _build_weekly_style_rotation(quant_payload)
-        risk_payload, attempts["risk"] = _run_step(
-            lambda: risk_check(
-                portfolio=[{"code": code, "weight": weight} for code, weight in weights.items()],
-                benchmark="000300",
-                lookback_days=90,
-                run_scenarios=True,
-            )
-        )
-        report_payload, attempts["report"] = _run_step(
-            lambda: build_report(
+        report_result, attempts["report"] = _run_step(
+            lambda: run_report_agent(
                 report_type="weekly",
                 report_date=week_end.isoformat(),
                 evidence_payload=evidence_payload,
                 quant_payload=quant_payload,
-                risk_payload=risk_payload,
+                risk_payload=risk_result.payload,
                 critic_status="PENDING",
             )
         )
-        critic_payload, attempts["critic"] = _run_step(
-            lambda: review_report(
-                report_payload=report_payload,
+        critic_result, attempts["critic"] = _run_step(
+            lambda: run_critic_agent(
+                report_payload=report_result.payload,
                 evidence_payload=evidence_payload,
                 quant_payload=quant_payload,
-                risk_payload=risk_payload,
+                risk_payload=risk_result.payload,
             )
         )
-        finalized_report, attempts["finalize"] = _run_step(lambda: finalize_report_with_critic(report_payload, critic_payload))
+        finalized_result, attempts["finalize"] = _run_step(
+            lambda: finalize_report_stage(
+                report_payload=report_result.payload,
+                critic_payload=critic_result.payload,
+            )
+        )
+
+        collaboration_agents = [
+            "planner",
+            "knowledge",
+            quant_result.agent_id,
+            risk_result.agent_id,
+            report_result.agent_id,
+            critic_result.agent_id,
+        ]
         run_logs.finish_run(
             run_record["id"],
             status="success",
             output_summary=_build_output_summary(
-                report_payload=finalized_report,
-                critic_payload=critic_payload,
+                report_payload=finalized_result.payload,
+                critic_payload=critic_result.payload,
                 evidence_payload=evidence_payload,
                 quant_payload=quant_payload,
-                risk_payload=risk_payload,
+                risk_payload=risk_result.payload,
                 attempts=attempts,
+                collaboration_agents=collaboration_agents,
             ),
         )
         return WeeklyReportResult(
-            report_payload=finalized_report,
-            critic_payload=critic_payload,
+            report_payload=finalized_result.payload,
+            critic_payload=critic_result.payload,
             evidence_payload=evidence_payload,
             quant_payload=quant_payload,
-            risk_payload=risk_payload,
+            risk_payload=risk_result.payload,
             run_log_id=run_record["id"],
             attempts=attempts,
+            collaboration_agents=collaboration_agents,
         )
     except Exception as exc:
         run_logs.finish_run(
@@ -317,6 +369,7 @@ def _build_output_summary(
     quant_payload: dict,
     risk_payload: dict,
     attempts: dict[str, int],
+    collaboration_agents: list[str],
 ) -> dict[str, Any]:
     return {
         "report_type": report_payload.get("report_type"),
@@ -328,6 +381,7 @@ def _build_output_summary(
         "trade_date": quant_payload.get("trade_date"),
         "risk_level": risk_payload.get("risk_level"),
         "attempts": attempts,
+        "collaboration_agents": collaboration_agents,
     }
 
 

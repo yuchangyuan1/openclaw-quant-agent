@@ -27,11 +27,20 @@ OpenClaw 架构改造完成的部分：
 - 已新增 `openclaw/runtime/`，统一运行态同步入口
 - 已将 `openclaw.config.json` 的 agentDir 切到 `openclaw/workspaces/*`
 - 已将运行态同步脚本切到从 `openclaw/workspaces/*` 同步工作空间
+- 已将 `planner` 的主流程收敛为显式协作 contract，而不是继续直接内嵌所有业务调用
 
 当前仍然保留的工程现实：
 
 - 当前业务主逻辑仍然主要在 `services/` 中执行
 - 当前 OpenClaw 仍然通过“Agent + skill/脚本桥接 + 本地 HTTP 服务”运行，而不是完全把业务逻辑上移到 prompt 中
+
+当前已经落地的协作主路径：
+
+- `DOC_QA`: `Planner -> Knowledge`
+- `QUANT_QUERY`: `Planner -> Quant`
+- `RISK_QUERY`: `Planner -> Risk`
+- `DAILY_REPORT`: `Planner -> Knowledge + Quant + Risk -> Report -> Critic`
+- `WEEKLY_REPORT`: `Planner -> Knowledge + Quant + Risk -> Report -> Critic`
 
 ## 3. 新架构总览
 

@@ -49,6 +49,8 @@ def query(req: PlannerQueryRequest) -> ApiResponse:
         "matched_companies": result.matched_companies,
         "matched_company_names": result.matched_company_names,
         "matched_themes": result.matched_themes,
+        "collaboration_agents": result.collaboration_agents,
+        "orchestration_mode": result.orchestration_mode,
     }
     return ApiResponse(success=True, data=data, timestamp=datetime.now())
 

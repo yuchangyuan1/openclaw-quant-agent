@@ -5,46 +5,62 @@
 OpenClaw Quant Research is a multi-agent equity research system built on top of OpenClaw.
 It is designed for public-market research workflows rather than live trading.
 
-The system combines:
+The project combines:
 
 - public news and announcement ingestion
 - retrieval-augmented document search
-- quantitative analysis
+- technical, valuation, and fundamental analysis
 - risk analysis
 - daily and weekly report generation
 - Feishu-based interactive research queries
 
-The current implementation is a working MVP with a complete local workflow:
+The current repository is no longer a proposal-only codebase. It is a working MVP with:
 
 - `ingestion` for public information collection
 - `rag` for indexing and retrieval
 - `planner` as the unified entry point
-- `quant` for technical and fundamental analysis
+- `quant` for technical + fundamental analysis
 - `risk` for portfolio and drawdown analysis
 - `report` for daily and weekly report generation
 - `critic` for report validation
 
-The repository now separates:
+The repository is organized as:
 
-- shared business services in `services/`
-- OpenClaw-native orchestration assets in `openclaw/workspaces/` and `openclaw/skills/`
+- shared deterministic services under `services/`
+- OpenClaw-native orchestration assets under `openclaw/workspaces/`, `openclaw/skills/`, and `openclaw/runtime/`
 
-## Project Architecture
+## Current Architecture
 
 ### High-Level Flow
 
 ```mermaid
 flowchart LR
     A["Feishu / Scheduled Jobs"] --> B["OpenClaw Gateway"]
-    B --> C["Planner Agent"]
-    C --> D["Planner Service"]
-    D --> E["Ingestion Service"]
-    D --> F["RAG / Knowledge Service"]
-    D --> G["Quant Service"]
-    D --> H["Risk Service"]
-    D --> I["Report Service"]
-    D --> J["Critic Service"]
+    B --> C["Planner Workspace"]
+    C --> D["Shared Skills"]
+    D --> E["Planner / Knowledge / Quant / Risk / Report / Critic Services"]
+    E --> F["Postgres"]
+    E --> G["Lightweight Graph"]
+    E --> H["Chroma"]
 ```
+
+### Runtime Collaboration Model
+
+The current runtime is no longer planner-only orchestration.
+
+Implemented collaboration paths:
+
+- `DOC_QA`: `Planner -> Knowledge`
+- `QUANT_QUERY`: `Planner -> Quant`
+- `RISK_QUERY`: `Planner -> Risk`
+- `MIXED_QUERY`: `Planner -> parallel(Knowledge, Quant, Risk)`
+- `DAILY_REPORT`: `Planner -> parallel(Knowledge, Quant, Risk) -> Report -> Critic`
+- `WEEKLY_REPORT`: `Planner -> Knowledge + Quant + Risk -> Report -> Critic`
+
+The most important collaborative paths already use parallel sub-agent style orchestration:
+
+- mixed research questions run `Knowledge + Quant + Risk` in parallel
+- daily report generation runs `Knowledge + Quant + Risk` in parallel before `Report + Critic`
 
 ### Data Architecture
 
@@ -59,7 +75,7 @@ The system uses a three-layer storage and retrieval model:
   - metric and risk snapshots
 - `Lightweight Knowledge Graph`
   - entity and relation layer stored on top of Postgres tables
-  - companies, themes, industries, announcements, document links
+  - companies, themes, industries, announcements, and document links
 - `Chroma`
   - vector index for document chunks
   - hybrid retrieval with keyword and semantic search
@@ -71,44 +87,11 @@ Additional local data directories:
 - `data/financials` for cached fundamental data
 - `data/reports` for archived reports
 
-### Main Services
-
-- `services/ingestion`
-  - fetches news and announcements
-  - deduplicates documents
-  - writes raw files and metadata
-- `services/rag`
-  - chunks documents
-  - writes embeddings to Chroma
-  - performs hybrid retrieval
-  - builds evidence packs
-- `services/planner`
-  - classifies user intent
-  - routes `DOC_QA`, `DAILY_REPORT`, and `WEEKLY_REPORT`
-  - orchestrates downstream services
-- `services/quant`
-  - computes technical indicators
-  - loads and caches fundamentals
-  - computes valuation factors
-  - supports industry-relative comparison
-  - produces combined technical + fundamental analysis
-- `services/risk`
-  - portfolio volatility
-  - max drawdown
-  - beta
-  - industry exposure
-  - scenario loss estimation
-- `services/report`
-  - renders daily and weekly report templates
-  - archives generated reports
-- `services/critic`
-  - validates report coverage, freshness, and consistency
-
 ## Quant Capabilities
 
-The `quant` module has already been upgraded from a price-only MVP to a combined technical and fundamental analysis module.
+The `quant` module has been upgraded from a price-only MVP to a combined technical and fundamental analysis module.
 
-Currently supported:
+Supported capabilities include:
 
 - Technical indicators
   - close price
@@ -163,7 +146,7 @@ openclaw/     OpenClaw-native workspaces, skills, and runtime helpers
 - Python 3.11+
 - Docker Desktop
 - PowerShell on Windows
-- Optional: OpenClaw CLI and Feishu credentials for message-channel testing
+- Optional: OpenClaw CLI and Feishu credentials for channel testing
 
 ### 1. Clone and Configure
 
@@ -173,12 +156,12 @@ Copy the environment template:
 Copy-Item .env.example .env
 ```
 
-Then edit `.env` and at least confirm:
+Then edit `.env` and confirm at least:
 
 - `POSTGRES_PASSWORD`
 - `DATABASE_URL`
-- optional model keys only if you want live provider integration
-- optional Feishu/OpenClaw values only if you want channel testing
+- optional model keys if you want live provider integration
+- optional Feishu/OpenClaw values if you want channel testing
 
 ### 2. Bootstrap the Project
 
@@ -204,7 +187,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev_bootstrap.ps1 -SyncOpenCl
 
 ### 3. Start the Full Docker Stack
 
-If you want the infrastructure and all seven API services in containers:
+To run infrastructure and all API services in containers:
 
 ```powershell
 docker compose up -d
@@ -223,7 +206,7 @@ This will start:
 - `report`
 - `critic`
 
-To stop the full container stack:
+To stop the full stack:
 
 ```powershell
 docker compose down
@@ -231,23 +214,21 @@ docker compose down
 
 ### 4. Start Local API Services Without Containers
 
-Start all seven local services:
+If you want Docker only for infrastructure and Python processes for the API layer:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\dev_up.ps1
 ```
 
-Stop them later with:
+Stop them with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\dev_down.ps1
 ```
 
-Use this mode when you want Docker only for infrastructure and Python processes for the API layer.
-
 ### 5. Manual Infrastructure Commands
 
-If you want to run the steps separately instead of using `dev_bootstrap.ps1`:
+If you want to run the setup steps separately:
 
 ```powershell
 docker compose up -d postgres chroma adminer
@@ -316,7 +297,7 @@ openclaw gateway restart
 
 ## Notes
 
-- The repository is structured so that another user can `git clone`, copy `.env.example` to `.env`, run `dev_bootstrap.ps1`, and use the project locally.
+- The repository is structured so another user can `git clone`, copy `.env.example` to `.env`, run `dev_bootstrap.ps1`, and use the project locally.
 - The repository also supports a full Docker-based API stack through `docker compose up -d`.
 - The one-click scripts manage local development workflows; they do not package Feishu credentials or your personal OpenClaw auth state.
 - Feishu is connected through the existing OpenClaw runtime.
@@ -326,3 +307,4 @@ openclaw gateway restart
 - Chroma is used through HTTP first and falls back to local persistent storage if needed.
 - OpenClaw role definitions live under `openclaw/workspaces/`.
 - Shared service invocation contracts live under `openclaw/skills/`.
+- The current MVP already has enough architecture and test coverage for assignment submission and GitHub presentation without further major refactoring.

@@ -26,26 +26,47 @@ def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
     monkeypatch.setenv("RUN_LOG_MANIFEST_PATH", str(tmp_path / "run_logs.json"))
     monkeypatch.setattr(
-        "services.planner.report_pipeline.build_evidence_pack",
-        lambda **_kwargs: {
-            "evidence_pack": [{"evidence_id": "E001", "title": "测试新闻", "source": "eastmoney", "published_at": "2026-04-05"}],
-            "synthesis": "测试结论",
-            "matched_companies": ["600519"],
-            "matched_themes": [],
-            "latest_evidence_date": "2026-04-05",
-        },
+        "services.planner.report_pipeline.run_knowledge_agent",
+        lambda **_kwargs: type(
+            "KnowledgeResult",
+            (),
+            {
+                "agent_id": "knowledge",
+                "payload": {
+                    "evidence_pack": [{"evidence_id": "E001", "title": "测试新闻", "source": "eastmoney", "published_at": "2026-04-05"}],
+                    "synthesis": "测试结论",
+                    "matched_companies": ["600519"],
+                    "matched_themes": [],
+                    "latest_evidence_date": "2026-04-05",
+                },
+            },
+        )(),
     )
     monkeypatch.setattr(
-        "services.planner.report_pipeline.daily_summary",
-        lambda *args, **kwargs: {
-            "trade_date": "2026-04-03",
-            "market_summary": {"sh300_pct_change": 0.5, "total_volume_billion": 12.3, "advancing_stocks": 2, "declining_stocks": 1},
-            "stocks": [{"code": "600519", "name": "贵州茅台", "close": 1460.0, "pct_change": 0.01, "ma5": 1449.0, "ma20": 1430.0, "ma_signal": "bullish"}],
-        },
+        "services.planner.report_pipeline.run_quant_agent",
+        lambda **_kwargs: type(
+            "QuantResult",
+            (),
+            {
+                "agent_id": "quant",
+                "payload": {
+                    "trade_date": "2026-04-03",
+                    "market_summary": {"sh300_pct_change": 0.5, "total_volume_billion": 12.3, "advancing_stocks": 2, "declining_stocks": 1},
+                    "stocks": [{"code": "600519", "name": "贵州茅台", "close": 1460.0, "pct_change": 0.01, "ma5": 1449.0, "ma20": 1430.0, "ma_signal": "bullish"}],
+                },
+            },
+        )(),
     )
     monkeypatch.setattr(
-        "services.planner.report_pipeline.risk_check",
-        lambda **_kwargs: {"risk_level": "MEDIUM", "alerts": ["行业集中度偏高"], "industry_breakdown": [{"industry": "食品饮料", "weight": 0.4}]},
+        "services.planner.report_pipeline.run_risk_agent",
+        lambda **_kwargs: type(
+            "RiskResult",
+            (),
+            {
+                "agent_id": "risk",
+                "payload": {"risk_level": "MEDIUM", "alerts": ["行业集中度偏高"], "industry_breakdown": [{"industry": "食品饮料", "weight": 0.4}]},
+            },
+        )(),
     )
 
     result = execute_daily_report(report_date="2026-04-05", stock_codes=["600519"])
@@ -56,6 +77,7 @@ def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
     assert manifest[0]["id"] == result.run_log_id
     assert manifest[0]["status"] == "success"
     assert manifest[0]["output_summary"]["report_type"] == "daily"
+    assert manifest[0]["output_summary"]["collaboration_agents"] == ["planner", "knowledge", "quant", "risk", "report", "critic"]
 
 
 def test_planner_run_logs_endpoint_returns_recent_runs(tmp_path, monkeypatch):
