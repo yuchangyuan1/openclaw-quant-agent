@@ -2,32 +2,68 @@
 
 ## Project Overview
 
-OpenClaw Quant Research is a multi-agent equity research system built on top of OpenClaw.
-It is designed for public-market research workflows rather than live trading.
+OpenClaw Quant Research is an evidence-grounded, risk-aware, human-supervised multi-agent decision support system built on OpenClaw.
+
+It demonstrates how multiple AI agents can assist complex analysis tasks without overstepping evidence boundaries, bypassing review, or producing unauditable conclusions. The system is designed for research support workflows, not autonomous decision-making.
 
 The project combines:
 
 - public news and announcement ingestion
-- retrieval-augmented document search
+- retrieval-augmented document search with evidence provenance
 - technical, valuation, and fundamental analysis
-- risk analysis
-- daily and weekly report generation
-- Feishu-based interactive research queries
+- risk analysis as an ethical safety gate
+- daily and weekly report generation with mandatory critic review
+- Feishu-based interactive research queries with action boundary labeling
 
-The current repository is no longer a proposal-only codebase. It is a working MVP with:
+The current repository is a working MVP with:
 
 - `ingestion` for public information collection
 - `rag` for indexing and retrieval
-- `planner` as the unified entry point
-- `quant` for technical + fundamental analysis
-- `risk` for portfolio and drawdown analysis
-- `report` for daily and weekly report generation
-- `critic` for report validation
+- `planner` as the accountable coordinator and unified entry point
+- `quant` for structured, reproducible numerical analysis
+- `risk` for portfolio and drawdown analysis (ethical safety gate)
+- `report` for daily and weekly report generation (transparent communication layer)
+- `critic` for mandatory ethics gate and report validation
 
 The repository is organized as:
 
 - shared deterministic services under `services/`
 - OpenClaw-native orchestration assets under `openclaw/workspaces/`, `openclaw/skills/`, and `openclaw/runtime/`
+
+## Ethics Architecture
+
+This project is structured around four ethical constraints applied at every output stage.
+
+### 1. Evidence Grounding
+
+Every output is backed by retrieved evidence. The `Knowledge` agent builds structured evidence packs with provenance (source, published date, evidence ID). The `evidence_status` field in every response indicates whether evidence is `SUFFICIENT`, `PARTIAL`, `INSUFFICIENT`, or `NONE`.
+
+### 2. Bounded Autonomy
+
+Outputs are classified into three action boundary levels:
+
+- `informational_only` — background information, no action implied
+- `analysis_only` — analytical interpretation, human judgement required
+- `requires_human_approval` — any report-type or high-risk output; the system explicitly marks that no action should be taken without human review
+
+When `requires_human_approval` is set, the Feishu reply is prefixed with:
+`【⚠ 需要人工审批后方可执行任何操作】`
+
+### 3. Mandatory Critic Gate
+
+The `Critic` service applies a 5-point ethics checklist to every report output before delivery:
+
+1. Are all key claims supported by evidence?
+2. Is data freshness explicitly stated?
+3. Is there any conflict between analysis and risk outputs?
+4. Does the output overstate certainty or use advisory language?
+5. Is the action boundary clearly marked?
+
+Outputs that fail the checklist are downgraded to `informational_only`. Outputs with overstatement phrases (`推荐买入`, `强烈建议`, etc.) trigger an automatic FAIL.
+
+### 4. Accountable Audit Trail
+
+Every run produces an `accountability_trail` recording which agents participated, how many evidence items were used, what the risk gate returned, whether the critic approved, and the final action boundary. This trail is written to run logs for post-hoc review.
 
 ## Current Architecture
 
@@ -89,7 +125,7 @@ Additional local data directories:
 
 ## Quant Capabilities
 
-The `quant` module has been upgraded from a price-only MVP to a combined technical and fundamental analysis module.
+The `quant` module provides structured, reproducible numerical analysis. All outputs are deterministic given the same inputs and are explicitly labeled with data dates. This module does not generate investment recommendations — it produces structured analysis inputs for human review.
 
 Supported capabilities include:
 

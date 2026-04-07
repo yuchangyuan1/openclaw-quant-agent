@@ -2,19 +2,21 @@
 
 ## Positioning
 
-This project is now a working OpenClaw-based research system rather than a pure architecture proposal.
+This project is an ethics-oriented decision support system built on OpenClaw. The architecture is designed to demonstrate how multi-agent AI systems can maintain evidence grounding, bounded autonomy, and human oversight at every output stage.
 
 The implemented pattern is:
 
 - OpenClaw is the control plane
 - deterministic Python services are the execution plane
 - Postgres, Lightweight Graph, and Chroma form the storage and retrieval plane
+- a cross-cutting ethics layer enforces output contracts, review gates, and audit semantics
 
 This means:
 
 - OpenClaw handles Feishu entry, cron scheduling, workspace isolation, agent instructions, and orchestration boundaries
 - business correctness stays in auditable services under `services/`
-- agent outputs are grounded by evidence, structured calculations, and run logs
+- agent outputs are constrained by evidence, validated by a mandatory critic gate, and labeled with action boundaries
+- every run produces a structured accountability trail recorded in run logs
 
 ## Current Architecture Decision
 
@@ -125,9 +127,51 @@ Responsibility:
 
 Responsibility:
 
-- evidence coverage checks
-- freshness checks
+- mandatory 5-point ethics checklist enforcement
+- overstatement and advisory language detection
+- evidence coverage and freshness validation
 - consistency checks between narrative and numeric outputs
+- `recommended_action_boundary` output (can only downgrade, never upgrade)
+- outputs that fail the checklist are automatically set to `informational_only`
+
+## Ethics Layer
+
+The ethics layer is not a separate service. It is implemented as a cross-cutting concern across existing components.
+
+### Output Contract
+
+Every `PlannerResponse` carries seven ethics fields:
+
+- `evidence_status` — `SUFFICIENT` / `PARTIAL` / `INSUFFICIENT` / `NONE`
+- `data_freshness` — `FRESH` (≤3 days) / `ACCEPTABLE` (≤7 days) / `STALE` / `UNKNOWN`
+- `risk_status` — mirrors the risk gate result
+- `conflict_detected` — whether analysis and risk outputs conflict
+- `human_approval_required` — whether human sign-off is required before action
+- `action_boundary` — `informational_only` / `analysis_only` / `requires_human_approval`
+- `accountability_trail` — structured record of agent participation and review results
+
+These fields are populated by `services/common/ethics.py` and exposed in every API response.
+
+### Action Boundary Classification
+
+The `classify_action_boundary()` function applies a deterministic rule table:
+
+1. Critic FAIL → `informational_only`
+2. Conflict detected → `requires_human_approval`
+3. Risk level HIGH/CRITICAL → `requires_human_approval`
+4. Report-type intent → `requires_human_approval`
+5. MIXED_QUERY with sufficient evidence → `analysis_only`
+6. All other cases → `informational_only`
+
+The Critic may further downgrade the boundary but cannot upgrade it.
+
+### Critic as Ethics Gate
+
+The Critic service applies a structured 5-point checklist to every report before delivery. If any item fails or overstatement is detected, it sets `recommended_action_boundary` to `informational_only` and the Planner adopts the more restrictive value. This gate cannot be bypassed.
+
+### Audit Trail
+
+`build_accountability_trail()` in `services/common/ethics.py` produces a structured dict written to run logs via `services/common/audit.py`. Every run is queryable by critic result, risk level, action boundary, and evidence count.
 
 ## System Layers
 

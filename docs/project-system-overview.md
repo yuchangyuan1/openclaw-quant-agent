@@ -2,13 +2,18 @@
 
 ## 1. 项目定位
 
-本项目是一个基于 OpenClaw 编排的多 Agent 股票投研系统，面向公开市场信息研究，不面向自动交易执行。
+本项目是一个基于 OpenClaw 的、强调证据约束、风险审查、人工监督与可审计性的多 Agent 决策支持系统。
 
-当前版本已经从“OpenClaw 作为消息入口，Python 服务作为主体”的结构，收敛为更明确的三层架构：
+系统的核心问题是：多个 AI Agent 在协作完成复杂分析任务时，如何确保不逾越证据边界、不绕过审查、不产生不可审计的结论？
+
+项目面向公开市场信息研究，不面向自动交易执行。所有可能影响决策的输出均被标注为”需人工审批”，不由系统自主执行任何操作。
+
+当前版本已经从”OpenClaw 作为消息入口，Python 服务作为主体”的结构，收敛为明确的三层架构，并在此基础上横切实施了伦理约束层：
 
 - 共享业务服务层：负责确定性计算、数据采集、存储与检索
 - OpenClaw 工作空间层：负责 Agent 角色边界、任务协作、调度与交互入口
 - Skills 层：负责跨 Agent 复用的服务调用契约与操作规范
+- 伦理约束层（横切）：负责输出契约、Critic 门控、行动边界分类与审计追踪
 
 ## 2. 当前完成度
 
@@ -135,34 +140,46 @@ flowchart LR
 
 ## 5. Agent 角色边界
 
-### Planner
+### Planner（可追责的协调者）
 
 - 唯一用户入口
 - 负责意图识别和任务路由
 - 优先通过 skill 或本地 planner HTTP 服务调度下游
 - 不应直接承担大量领域计算
+- 负责为每个输出分配行动边界（`action_boundary`）
+- 当 `human_approval_required=True` 时，在飞书回复前加醒目提示
 
-### Knowledge
+### Knowledge（证据约束 Agent）
 
 - 负责文档检索和证据组织
 - 聚焦 RAG、图谱上下文、evidence pack
+- 输出必须包含来源和发布日期，不得推断超出证据范围的结论
 
-### Quant
+### Quant（确定性数值分析 Agent）
 
 - 负责技术面、估值、财务因子和行业比较
 - 输出组合评分与解释
+- 所有输出确定性可复现，明确标注数据日期，不生成投资建议
 
-### Risk
+### Risk（伦理安全门）
 
 - 负责风险计算与组合暴露分析
+- 当风险等级为 HIGH 时，触发 `requires_human_approval`
+- 扮演伦理安全门角色：高风险状态必须在输出中明示
 
-### Report
+### Report（透明传达层）
 
 - 负责日报 / 周报组装与归档
+- 每份报告必须渲染"审查与合规"章节（含证据状态、行动边界、人工审批要求）
+- 不得发明或推断任何未来自上游载荷的数据
 
-### Critic
+### Critic（伦理监督门控）
 
-- 负责质量校验、覆盖率、时效性和一致性检查
+- 不可绕过的强制伦理门控
+- 对每份报告执行 5 点伦理校验清单
+- 检测过度确定性表述（推荐买入、强烈建议等）
+- 可将行动边界降级为 `informational_only`，不可升级
+- 输出 `ethics_checklist`、`overstatement_detected`、`recommended_action_boundary`
 
 ## 6. 数据与存储结构
 
@@ -199,9 +216,73 @@ flowchart LR
 - `data/chroma/`
   - Chroma 本地持久化回退目录
 
-## 7. 与旧结构的关系
+## 7. 伦理约束实施方式
 
-### 7.1 为什么保留 `services/`
+伦理约束不依赖额外服务，而是通过以下机制在现有架构中横切实施。
+
+### 7.1 输出契约
+
+每个 `PlannerResponse` 携带 7 个伦理字段，由 `services/common/ethics.py` 计算：
+
+| 字段 | 含义 | 取值 |
+|---|---|---|
+| `evidence_status` | 证据充足性 | SUFFICIENT / PARTIAL / INSUFFICIENT / NONE |
+| `data_freshness` | 数据时效 | FRESH / ACCEPTABLE / STALE / UNKNOWN |
+| `risk_status` | 风险等级 | LOW / MEDIUM / HIGH / UNKNOWN |
+| `conflict_detected` | 分析与风险是否冲突 | bool |
+| `human_approval_required` | 是否需要人工审批 | bool |
+| `action_boundary` | 行动边界分层 | informational_only / analysis_only / requires_human_approval |
+| `accountability_trail` | 责任追踪字典 | 参与 Agent、证据数、Critic 结果等 |
+
+### 7.2 行动边界分类规则
+
+`classify_action_boundary()` 按优先级顺序应用以下规则：
+
+1. `critic_status == FAIL` → `informational_only`
+2. `conflict_detected == True` → `requires_human_approval`
+3. `risk_status in {HIGH, CRITICAL}` → `requires_human_approval`
+4. `intent in {DAILY_REPORT, WEEKLY_REPORT}` → `requires_human_approval`
+5. `intent == MIXED_QUERY` 且 `evidence_count >= 3` → `analysis_only`
+6. 其余 → `informational_only`
+
+Critic 可将 Planner 的边界降级，不能升级。
+
+### 7.3 Critic 5 点伦理校验清单
+
+| 校验项 | 通过条件 |
+|---|---|
+| 关键结论有据可查 | 证据覆盖率 ≥ 0.5 |
+| 数据时效已标注 | 内容含"数据日期"或"数据区间" |
+| 分析与风险无冲突 | 一致性检查通过 |
+| 无过度确定性表述 | 不含"推荐买入"等词汇 |
+| 行动边界已标注 | 内容含"行动边界"或"人工审批" |
+
+### 7.4 审计追踪
+
+每次运行日志（`run_logs` 表）的 `output_summary` 字段包含：
+
+```json
+{
+  "evidence_status": "SUFFICIENT",
+  "freshness_status": "FRESH",
+  "conflict_detected": false,
+  "human_approval_required": true,
+  "action_boundary": "requires_human_approval",
+  "ethics_checklist": {...},
+  "overstatement_detected": false
+}
+```
+
+### 7.5 飞书展示
+
+当 `human_approval_required=True` 时，planner router 在飞书摘要前插入：
+```
+【⚠ 需要人工审批后方可执行任何操作】
+```
+
+## 8. 与旧结构的关系
+
+### 8.1 为什么保留 `services/`
 
 当前项目没有把业务逻辑搬进 Agent prompt，而是保留在 `services/`，原因是：
 
@@ -210,7 +291,7 @@ flowchart LR
 - 便于本地排障
 - 数值计算和检索逻辑更适合保留为确定性服务
 
-### 7.2 旧兼容层已删除
+### 8.2 旧兼容层已删除
 
 旧的 `agents/` 兼容目录已经移除，当前仓库只保留新的 OpenClaw 原生结构：
 
@@ -220,49 +301,46 @@ flowchart LR
 
 这意味着仓库内的角色定义来源已经统一，不再同时维护两套 Agent prompt 目录。
 
-## 8. 现在为什么更像 OpenClaw 项目
+## 9. 架构演进路径
 
-改造前：
+### 第一阶段（已完成）
 
-- OpenClaw 主要负责 Feishu 接入和 cron
-- 业务主流程更多由本地脚本和服务直接驱动
-
-改造后：
+从”OpenClaw 接入的量化系统”收敛为”OpenClaw 编排的多 Agent 系统”：
 
 - OpenClaw 明确拥有角色层
 - Workspace 成为角色定义的主入口
 - Skills 成为跨角色复用能力的主入口
-- runtime bootstrap 成为运行态同步的统一入口
+- Runtime Bootstrap 成为运行态同步的统一入口
 
-也就是说，当前架构已经从“OpenClaw 接入的系统”进一步收敛为“以 OpenClaw 为编排层的系统”。
+### 第二阶段（已完成）
 
-## 9. 当前限制
+在现有架构上横切实施伦理约束层：
 
-虽然架构已经更贴近 OpenClaw-native，但当前仍有这些限制：
+- 输出契约扩展（7 个伦理字段）
+- Critic 从”质检”升级为”强制伦理门控”
+- 行动边界分类机制（三类输出）
+- 审计日志语义扩展（ethics 字段写入 run_logs）
+- 飞书端人工审批提示
+
+## 10. 当前限制
 
 - 业务计算仍以本地服务为主，而不是原生 Agent 推理流
 - 飞书消息稳定性仍依赖本地 `planner` HTTP 服务在线
 - 一些运行态执行仍通过脚本桥接，而不是纯 skill 工具调用
-- 运行态执行仍然依赖本地服务在线，而不是纯 Agent 工具链
+- 过度表述检测基于关键词列表，不含语义理解
 
-## 10. 后续建议
+## 11. 后续建议
 
-推荐后续继续按下面顺序推进：
+1. 扩充过度表述检测词典，增加更多隐含建议性表达
+2. 为 DOC_QA 和 QUANT_QUERY 路径增加证据充足性校验（当前仅报告路径有 Critic）
+3. 让 Planner 默认只通过 skills 调服务，减少 prompt 内自由发挥
+4. 将审计追踪可视化，通过 runlog-inspect skill 暴露给用户
 
-1. 让 Planner 默认只通过 skills 调服务，减少 prompt 内自由发挥
-2. 收紧 Feishu 线上兜底逻辑，服务不可用时直接报明确错误
-3. 为每个 workspace 增补更完整的 playbooks
-4. 将更多运行检查、告警、回放动作迁到 skills
-5. 继续减少脚本桥接，向更稳定的 skill 调用收敛
+## 12. 结论
 
-## 11. 结论
+当前项目已经完成两阶段改造：
 
-当前项目已经完成从“服务主导、OpenClaw 接入”到“服务主导、OpenClaw 编排”的第一阶段重构。
+1. 从”服务主导、OpenClaw 接入”到”服务主导、OpenClaw 编排”
+2. 从”量化投研工具”到”伦理导向的多 Agent 决策支持系统”
 
-它仍然保留了 Python 服务层的工程稳定性，但现在已经具备了：
-
-- 基于 Workspace 的角色边界
-- 基于 Skills 的能力复用
-- 基于 Runtime Bootstrap 的运行态同步
-
-这使它更适合作为一个“基于 OpenClaw 框架实现的多 Agent 投研项目”进行展示和后续扩展。
+项目的学术意义在于：不是在讨论”AI 应该有伦理”，而是展示”如何在多 Agent 系统设计中把伦理约束落实为可验证的工程机制”——通过输出契约、强制审查门控、行动边界分类和完整审计追踪，将伦理要求编码为系统行为，而不仅是文档声明。
