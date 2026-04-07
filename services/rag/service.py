@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from collections import Counter
 from math import log
+from pathlib import Path
 
 from services.common.graph import GraphRepository
-from services.common.paths import metadata_dir
+from services.common.paths import PROJECT_ROOT, data_dir, metadata_dir
 from services.common.repository import DocumentRepository
 from services.common.stocks import matches_company_terms
 from services.common.text import build_snippet, chunk_text, normalize_text, tokenize_text
@@ -155,8 +156,35 @@ def retrieve(
 def _load_raw(document: dict) -> dict:
     if not document.get("file_path"):
         return {}
-    with open(document["file_path"], encoding="utf-8") as handle:
+    path = _resolve_raw_path(str(document["file_path"]))
+    if path is None or not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _resolve_raw_path(raw_path: str) -> Path | None:
+    path = Path(raw_path)
+    if path.exists():
+        return path
+
+    normalized = raw_path.replace("\\", "/")
+    if normalized.startswith("/app/data/"):
+        candidate = data_dir() / normalized.removeprefix("/app/data/")
+        if candidate.exists():
+            return candidate
+
+    if normalized.startswith("/app/"):
+        candidate = PROJECT_ROOT / normalized.removeprefix("/app/")
+        if candidate.exists():
+            return candidate
+
+    if not path.is_absolute():
+        candidate = (PROJECT_ROOT / path).resolve()
+        if candidate.exists():
+            return candidate
+
+    return None
 
 
 def _keyword_results(
