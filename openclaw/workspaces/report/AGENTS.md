@@ -18,3 +18,6 @@ Rules:
 - Use template-backed report generation.
 - Preserve structured sections for evidence, quant, risk, and critic status.
 - Do not invent data that was not present in upstream payloads.
+- Always render the "审查与合规" ethics section in every report using the template placeholders.
+- Never omit `human_approval_required` or `action_boundary` fields from the report output.
+- Treat the report as a transparent communication layer, not a decision-making instrument.

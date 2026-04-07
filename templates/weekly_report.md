@@ -24,6 +24,15 @@
 
 {watchlist}
 
+## 6. 审查与合规
+
+- 证据状态：{evidence_status}
+- 数据时效：{data_freshness}
+- 冲突检测：{conflict_detected}
+- 人工审批要求：{human_approval_required}
+- 行动边界：{action_boundary}
+- Critic 伦理校验：{ethics_checklist_summary}
+
 ---
 
 数据来源：{data_sources}

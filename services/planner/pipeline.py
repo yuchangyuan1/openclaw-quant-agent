@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
+from services.common.ethics import (
+    build_accountability_trail,
+    classify_action_boundary,
+    compute_data_freshness,
+    compute_evidence_status,
+)
 from services.common.stocks import extract_company_terms, load_target_stocks
 from services.rag.service import build_index
 
@@ -29,6 +35,14 @@ class PlannerResponse:
     company_terms: list[str]
     collaboration_agents: list[str]
     orchestration_mode: str
+    # Ethics fields
+    evidence_status: str = "NONE"
+    data_freshness: str = "UNKNOWN"
+    risk_status: str = "UNKNOWN"
+    conflict_detected: bool = False
+    human_approval_required: bool = False
+    action_boundary: str = "informational_only"
+    accountability_trail: dict = field(default_factory=dict)
 
 
 def classify_intent(message: str) -> str:
@@ -41,7 +55,7 @@ def classify_intent(message: str) -> str:
         return "WEEKLY_REPORT"
     has_doc = any(keyword in text for keyword in ["公告", "新闻", "进展", "事件", "披露"])
     has_risk = any(keyword in text for keyword in ["回撤", "风险", "暴露", "压力测试", "持仓"])
-    has_quant = any(keyword in text for keyword in ["量化", "均线", "涨跌幅", "成交量", "指标", "估值", "roe", "pe"])
+    has_quant = any(keyword in text for keyword in ["量化", "均线", "涨跌幅", "成交量", "指标", "估值", "roe", "ROE", "pe", "PE"])
     if sum([has_doc, has_quant, has_risk]) >= 2 or "综合" in text or "同时" in text:
         return "MIXED_QUERY"
     if has_risk:
@@ -78,6 +92,17 @@ def execute_message(message: str, refresh_index: bool = True) -> PlannerResponse
         company_terms=infer_company_terms(message),
         collaboration_agents=["planner"],
         orchestration_mode="planner_only",
+        evidence_status="NONE",
+        data_freshness="UNKNOWN",
+        risk_status="UNKNOWN",
+        conflict_detected=False,
+        human_approval_required=False,
+        action_boundary="informational_only",
+        accountability_trail=build_accountability_trail(
+            participating_agents=["planner"], evidence_count=0, evidence_status="NONE",
+            risk_status="UNKNOWN", critic_result="NOT_IMPLEMENTED",
+            conflict_detected=False, action_boundary="informational_only", human_approval_required=False,
+        ),
     )
 
 
@@ -97,23 +122,51 @@ def execute_doc_qa(message: str, refresh_index: bool = True) -> PlannerResponse:
         min_score=0.25,
     )
     payload = knowledge_result.payload
-    reply = format_doc_qa_reply(message, payload)
-    sources = sorted({item["source"] for item in payload["evidence_pack"]})
+    evidence_count = len(payload["evidence_pack"])
     critic_status = "PASS_WITH_WARNINGS" if payload["coverage_warning"] else "PASS"
+    evidence_status = compute_evidence_status(evidence_count, payload["coverage_warning"])
+    data_freshness = compute_data_freshness(payload["latest_evidence_date"])
+    action_boundary = classify_action_boundary(
+        intent="DOC_QA",
+        critic_status=critic_status,
+        conflict_detected=False,
+        risk_status="UNKNOWN",
+        evidence_count=evidence_count,
+    )
+    collaboration_agents = ["planner", knowledge_result.agent_id]
+    trail = build_accountability_trail(
+        participating_agents=collaboration_agents,
+        evidence_count=evidence_count,
+        evidence_status=evidence_status,
+        risk_status="UNKNOWN",
+        critic_result=critic_status,
+        conflict_detected=False,
+        action_boundary=action_boundary,
+        human_approval_required=(action_boundary == "requires_human_approval"),
+    )
     matched_companies = payload.get("matched_companies", [])
+    reply = format_doc_qa_reply(message, payload, action_boundary=action_boundary, human_approval_required=trail["human_approval_required"])
+    sources = sorted({item["source"] for item in payload["evidence_pack"]})
     return PlannerResponse(
         intent="DOC_QA",
         reply_markdown=reply,
         latest_data_date=payload["latest_evidence_date"],
         sources=sources,
         critic_status=critic_status,
-        evidence_count=len(payload["evidence_pack"]),
+        evidence_count=evidence_count,
         matched_companies=matched_companies,
         matched_company_names=_company_names_from_codes(matched_companies),
         matched_themes=payload.get("matched_themes", []),
         company_terms=payload.get("company_terms", company_terms),
-        collaboration_agents=["planner", knowledge_result.agent_id],
+        collaboration_agents=collaboration_agents,
         orchestration_mode="delegated_single_agent",
+        evidence_status=evidence_status,
+        data_freshness=data_freshness,
+        risk_status="UNKNOWN",
+        conflict_detected=False,
+        human_approval_required=trail["human_approval_required"],
+        action_boundary=action_boundary,
+        accountability_trail=trail,
     )
 
 
@@ -188,7 +241,29 @@ def execute_mixed_query(message: str, refresh_index: bool = True) -> PlannerResp
         if "risk_service" not in sources:
             sources.append("risk_service")
 
+    risk_status = risk_payload.get("risk_level", "UNKNOWN") if risk_payload else "UNKNOWN"
+    conflict_detected = bool(risk_payload and risk_payload.get("alerts"))
     collaboration_agents = ["planner"] + [results[key].agent_id for key in results]
+    evidence_status = compute_evidence_status(evidence_count, None if evidence_count >= 3 else "low")
+    data_freshness = compute_data_freshness(latest_data_date)
+    action_boundary = classify_action_boundary(
+        intent="MIXED_QUERY",
+        critic_status=critic_status,
+        conflict_detected=conflict_detected,
+        risk_status=risk_status,
+        evidence_count=evidence_count,
+    )
+    trail = build_accountability_trail(
+        participating_agents=collaboration_agents,
+        evidence_count=evidence_count,
+        evidence_status=evidence_status,
+        risk_status=risk_status,
+        critic_result=critic_status,
+        conflict_detected=conflict_detected,
+        action_boundary=action_boundary,
+        human_approval_required=(action_boundary == "requires_human_approval"),
+    )
+    matched_companies = (knowledge_payload or {}).get("matched_companies", stock_codes) if knowledge_payload else stock_codes
     return PlannerResponse(
         intent="MIXED_QUERY",
         reply_markdown="\n".join(sections),
@@ -196,12 +271,19 @@ def execute_mixed_query(message: str, refresh_index: bool = True) -> PlannerResp
         sources=sources,
         critic_status=critic_status,
         evidence_count=evidence_count,
-        matched_companies=(knowledge_payload or {}).get("matched_companies", stock_codes) if knowledge_payload else stock_codes,
-        matched_company_names=_company_names_from_codes((knowledge_payload or {}).get("matched_companies", stock_codes) if knowledge_payload else stock_codes),
+        matched_companies=matched_companies,
+        matched_company_names=_company_names_from_codes(matched_companies),
         matched_themes=matched_themes,
         company_terms=company_terms,
         collaboration_agents=collaboration_agents,
         orchestration_mode="parallel_subagents",
+        evidence_status=evidence_status,
+        data_freshness=data_freshness,
+        risk_status=risk_status,
+        conflict_detected=conflict_detected,
+        human_approval_required=trail["human_approval_required"],
+        action_boundary=action_boundary,
+        accountability_trail=trail,
     )
 
 
@@ -222,10 +304,34 @@ def execute_quant_query(message: str) -> PlannerResponse:
             company_terms=company_terms,
             collaboration_agents=["planner"],
             orchestration_mode="planner_only",
+            evidence_status="NONE",
+            data_freshness="UNKNOWN",
+            risk_status="UNKNOWN",
+            conflict_detected=False,
+            human_approval_required=False,
+            action_boundary="informational_only",
+            accountability_trail=build_accountability_trail(
+                participating_agents=["planner"], evidence_count=0, evidence_status="NONE",
+                risk_status="UNKNOWN", critic_result="PASS_WITH_WARNINGS",
+                conflict_detected=False, action_boundary="informational_only", human_approval_required=False,
+            ),
         )
 
     quant_result = run_quant_agent(stock_codes=stock_codes, report_date=date.today().isoformat(), indicators=[])
     payload = quant_result.payload
+    evidence_count = len(payload.get("stocks", []))
+    data_freshness = compute_data_freshness(payload.get("trade_date"))
+    action_boundary = classify_action_boundary(
+        intent="QUANT_QUERY", critic_status="PASS", conflict_detected=False,
+        risk_status="UNKNOWN", evidence_count=evidence_count,
+    )
+    collaboration_agents = ["planner", quant_result.agent_id]
+    trail = build_accountability_trail(
+        participating_agents=collaboration_agents, evidence_count=evidence_count,
+        evidence_status=compute_evidence_status(evidence_count, None),
+        risk_status="UNKNOWN", critic_result="PASS", conflict_detected=False,
+        action_boundary=action_boundary, human_approval_required=(action_boundary == "requires_human_approval"),
+    )
     reply_lines = [
         "**量化分析**",
         "",
@@ -251,13 +357,20 @@ def execute_quant_query(message: str) -> PlannerResponse:
         latest_data_date=payload.get("trade_date"),
         sources=["quant_service"],
         critic_status="PASS",
-        evidence_count=len(payload.get("stocks", [])),
+        evidence_count=evidence_count,
         matched_companies=stock_codes,
         matched_company_names=_company_names_from_codes(stock_codes),
         matched_themes=[],
         company_terms=company_terms,
-        collaboration_agents=["planner", quant_result.agent_id],
+        collaboration_agents=collaboration_agents,
         orchestration_mode="delegated_single_agent",
+        evidence_status=trail["evidence_status"],
+        data_freshness=data_freshness,
+        risk_status="UNKNOWN",
+        conflict_detected=False,
+        human_approval_required=trail["human_approval_required"],
+        action_boundary=action_boundary,
+        accountability_trail=trail,
     )
 
 
@@ -278,6 +391,17 @@ def execute_risk_query(message: str) -> PlannerResponse:
             company_terms=company_terms,
             collaboration_agents=["planner"],
             orchestration_mode="planner_only",
+            evidence_status="NONE",
+            data_freshness="UNKNOWN",
+            risk_status="UNKNOWN",
+            conflict_detected=False,
+            human_approval_required=False,
+            action_boundary="informational_only",
+            accountability_trail=build_accountability_trail(
+                participating_agents=["planner"], evidence_count=0, evidence_status="NONE",
+                risk_status="UNKNOWN", critic_result="PASS_WITH_WARNINGS",
+                conflict_detected=False, action_boundary="informational_only", human_approval_required=False,
+            ),
         )
 
     equal_weight = round(1 / len(stock_codes), 4)
@@ -285,6 +409,20 @@ def execute_risk_query(message: str) -> PlannerResponse:
     risk_result = run_risk_agent(portfolio=portfolio)
     payload = risk_result.payload
     alerts = payload.get("alerts", [])
+    risk_status = payload.get("risk_level", "UNKNOWN")
+    critic_status = "PASS" if not alerts else "PASS_WITH_WARNINGS"
+    conflict_detected = bool(alerts)
+    action_boundary = classify_action_boundary(
+        intent="RISK_QUERY", critic_status=critic_status, conflict_detected=conflict_detected,
+        risk_status=risk_status, evidence_count=len(alerts),
+    )
+    collaboration_agents = ["planner", risk_result.agent_id]
+    trail = build_accountability_trail(
+        participating_agents=collaboration_agents, evidence_count=len(alerts),
+        evidence_status="NONE", risk_status=risk_status, critic_result=critic_status,
+        conflict_detected=conflict_detected, action_boundary=action_boundary,
+        human_approval_required=(action_boundary == "requires_human_approval"),
+    )
     reply = "\n".join(
         [
             "**风险分析**",
@@ -292,9 +430,11 @@ def execute_risk_query(message: str) -> PlannerResponse:
             f"查询：{message}",
             "协作路径：Planner -> Risk",
             f"研究命中公司：{_format_company_labels(stock_codes)}",
-            f"风险等级：{payload.get('risk_level')}",
+            f"风险等级：{risk_status}",
             f"告警条数：{len(alerts)}",
             f"告警内容：{'；'.join(alerts) if alerts else '无'}",
+            f"**行动边界**：{action_boundary}",
+            f"**人工审批**：{'需要' if trail['human_approval_required'] else '不需要'}",
         ]
     )
     return PlannerResponse(
@@ -302,14 +442,21 @@ def execute_risk_query(message: str) -> PlannerResponse:
         reply_markdown=reply,
         latest_data_date=None,
         sources=["risk_service"],
-        critic_status="PASS" if not alerts else "PASS_WITH_WARNINGS",
+        critic_status=critic_status,
         evidence_count=len(alerts),
         matched_companies=stock_codes,
         matched_company_names=_company_names_from_codes(stock_codes),
         matched_themes=[],
         company_terms=company_terms,
-        collaboration_agents=["planner", risk_result.agent_id],
+        collaboration_agents=collaboration_agents,
         orchestration_mode="delegated_single_agent",
+        evidence_status="NONE",
+        data_freshness="UNKNOWN",
+        risk_status=risk_status,
+        conflict_detected=conflict_detected,
+        human_approval_required=trail["human_approval_required"],
+        action_boundary=action_boundary,
+        accountability_trail=trail,
     )
 
 
@@ -353,7 +500,13 @@ def infer_company_terms(message: str) -> list[str]:
     return extract_company_terms(message)
 
 
-def format_doc_qa_reply(message: str, payload: dict) -> str:
+def format_doc_qa_reply(
+    message: str,
+    payload: dict,
+    *,
+    action_boundary: str = "informational_only",
+    human_approval_required: bool = False,
+) -> str:
     synthesis = payload["synthesis"]
     sources = "、".join(sorted({item["source"] for item in payload["evidence_pack"]})) or "暂无"
     latest_date = payload["latest_evidence_date"] or "未知"
@@ -375,7 +528,9 @@ def format_doc_qa_reply(message: str, payload: dict) -> str:
         f"**数据来源**：{sources}\n"
         f"**数据日期**：{latest_date}\n"
         f"**证据数量**：{len(payload['evidence_pack'])}\n"
-        f"**Critic 校验**：{critic_status}"
+        f"**Critic 校验**：{critic_status}\n"
+        f"**行动边界**：{action_boundary}\n"
+        f"**人工审批**：{'需要' if human_approval_required else '不需要'}"
     )
 
 
@@ -396,15 +551,35 @@ def _report_result_to_planner_response(
     report_type_label = "日报" if intent == "DAILY_REPORT" else "周报"
     latest_date = evidence_payload.get("latest_evidence_date") or report_payload.get("report_date")
     count = len(evidence_payload.get("evidence_pack", []))
+    critic_status = critic_payload.get("status", "UNKNOWN")
+    risk_status = report_payload.get("risk_level", "UNKNOWN")
+    conflict_detected = bool(critic_payload.get("errors")) or bool(report_payload.get("has_conflicts"))
+    evidence_status = compute_evidence_status(count, critic_payload.get("warnings") and "low" or None)
+    data_freshness = compute_data_freshness(latest_date)
+    critic_recommended = critic_payload.get("recommended_action_boundary")
+    action_boundary = classify_action_boundary(
+        intent=intent, critic_status=critic_status, conflict_detected=conflict_detected,
+        risk_status=risk_status, evidence_count=count, critic_recommended=critic_recommended,
+    )
+    collaboration_agents = ["planner", "knowledge", "quant", "risk", "report", "critic"]
+    trail = build_accountability_trail(
+        participating_agents=collaboration_agents, evidence_count=count,
+        evidence_status=evidence_status, risk_status=risk_status,
+        critic_result=critic_status, conflict_detected=conflict_detected,
+        action_boundary=action_boundary, human_approval_required=(action_boundary == "requires_human_approval"),
+    )
+    approval_notice = "【⚠ 需要人工审批后方可执行任何操作】\n\n" if trail["human_approval_required"] else ""
     reply = (
-        f"**{report_type_label}已生成**\n\n"
+        f"{approval_notice}**{report_type_label}已生成**\n\n"
         f"请求：{message}\n"
         f"报告日期：{report_payload.get('report_date')}\n"
         f"报告路径：{report_payload.get('file_path')}\n"
         f"协作路径：Planner -> Knowledge + Quant + Risk -> Report -> Critic\n"
-        f"Critic：{critic_payload.get('status')}\n"
+        f"Critic：{critic_status}\n"
         f"证据数量：{count}\n"
         f"数据日期/区间：{evidence_payload.get('data_dates_label') or latest_date}\n"
+        f"**行动边界**：{action_boundary}\n"
+        f"**人工审批**：{'需要' if trail['human_approval_required'] else '不需要'}\n"
         f"完整摘要：{report_payload.get('feishu_summary')}"
     )
     return PlannerResponse(
@@ -412,14 +587,21 @@ def _report_result_to_planner_response(
         reply_markdown=reply,
         latest_data_date=latest_date,
         sources=sources,
-        critic_status=critic_payload.get("status", "UNKNOWN"),
+        critic_status=critic_status,
         evidence_count=count,
         matched_companies=matched_companies,
         matched_company_names=_company_names_from_codes(matched_companies),
         matched_themes=evidence_payload.get("matched_themes", []),
         company_terms=[],
-        collaboration_agents=["planner", "knowledge", "quant", "risk", "report", "critic"],
+        collaboration_agents=collaboration_agents,
         orchestration_mode="parallel_subagents",
+        evidence_status=evidence_status,
+        data_freshness=data_freshness,
+        risk_status=risk_status,
+        conflict_detected=conflict_detected,
+        human_approval_required=trail["human_approval_required"],
+        action_boundary=action_boundary,
+        accountability_trail=trail,
     )
 
 

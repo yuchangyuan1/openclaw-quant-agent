@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from services.common.ethics import classify_action_boundary, compute_data_freshness, compute_evidence_status
 from services.common.paths import PROJECT_ROOT, reports_dir
 
 
@@ -44,6 +45,12 @@ def finalize_report_with_critic(report_payload: dict, critic_payload: dict) -> d
     if updated_content == old_content:
         updated_content = f"{old_content}\n\n{new_marker}"
 
+    # Fill in ethics checklist summary
+    ethics_checklist = critic_payload.get("ethics_checklist", {})
+    if ethics_checklist:
+        checklist_summary = _format_ethics_checklist_summary(ethics_checklist)
+        updated_content = updated_content.replace("PENDING", checklist_summary, 1)
+
     path = Path(report_payload["file_path"])
     path.write_text(updated_content, encoding="utf-8")
 
@@ -82,6 +89,18 @@ def _render_template(
     data_sources = _collect_data_sources(evidence_payload, quant_payload, risk_payload)
     data_dates = _collect_data_dates(evidence_payload, quant_payload, risk_payload)
 
+    evidence_count = len(evidence_items)
+    latest_date = evidence_payload.get("latest_evidence_date")
+    risk_status = risk_payload.get("risk_level", "UNKNOWN")
+    evidence_status = compute_evidence_status(evidence_count, None)
+    data_freshness = compute_data_freshness(latest_date)
+    conflict_detected = _detect_conflicts(evidence_payload, quant_payload)
+    action_boundary = classify_action_boundary(
+        intent="DAILY_REPORT", critic_status=critic_status,
+        conflict_detected=conflict_detected, risk_status=risk_status, evidence_count=evidence_count,
+    )
+    human_approval_required = action_boundary == "requires_human_approval"
+
     payload = {
         "report_date": report_date,
         "report_week": evidence_payload.get("report_week", report_date),
@@ -93,7 +112,7 @@ def _render_template(
         "weekly_evidence_highlights": evidence_highlights,
         "quant_signals": quant_signals,
         "weekly_quant_summary": quant_signals,
-        "risk_level": risk_payload.get("risk_level", "UNKNOWN"),
+        "risk_level": risk_status,
         "risk_alerts": risk_alerts,
         "industry_exposure": industry_exposure,
         "risk_breakdown": industry_exposure,
@@ -104,6 +123,13 @@ def _render_template(
         "data_sources": data_sources,
         "data_dates": data_dates,
         "critic_status": critic_status,
+        # Ethics fields
+        "evidence_status": evidence_status,
+        "data_freshness": data_freshness,
+        "conflict_detected": "是" if conflict_detected else "否",
+        "human_approval_required": "是" if human_approval_required else "否",
+        "action_boundary": action_boundary,
+        "ethics_checklist_summary": "PENDING",
     }
     return template.format(**payload)
 
@@ -222,12 +248,21 @@ def _build_summary(
     top_titles = [item["title"] for item in evidence_payload.get("evidence_pack", [])[:2]]
     highlights = "；".join(top_titles) if top_titles else "暂无重点事件"
     report_label = "周报" if report_type == "weekly" else "日报"
+    risk_status = risk_payload.get("risk_level", "UNKNOWN")
+    action_boundary = classify_action_boundary(
+        intent="DAILY_REPORT", critic_status="PENDING",
+        conflict_detected=_detect_conflicts(evidence_payload, quant_payload),
+        risk_status=risk_status, evidence_count=len(evidence_payload.get("evidence_pack", [])),
+    )
+    human_approval_required = action_boundary == "requires_human_approval"
+    approval_line = "人工审批：需要 | " if human_approval_required else ""
     return (
         f"投研{report_label} {report_date}\n"
         f"市场概况：沪深300样本变动 {summary.get('sh300_pct_change', 'N/A')}%，"
         f"上涨 {summary.get('advancing_stocks', 'N/A')}，下跌 {summary.get('declining_stocks', 'N/A')}。\n"
         f"重点事件：{highlights}\n"
-        f"风险等级：{risk_payload.get('risk_level', 'UNKNOWN')}；主要风险：{alerts}\n"
+        f"风险等级：{risk_status}；主要风险：{alerts}\n"
+        f"{approval_line}行动边界：{action_boundary}\n"
         f"完整报告：{file_path}"
     )
 
@@ -243,6 +278,21 @@ def _conflict_notes(evidence_payload: dict, quant_payload: dict) -> str | None:
     if not _detect_conflicts(evidence_payload, quant_payload):
         return None
     return "文本证据偏谨慎，但量化信号中偏强个股数量更多，请综合判断。"
+
+
+def _format_ethics_checklist_summary(checklist: dict) -> str:
+    labels = {
+        "claims_supported_by_evidence": "关键结论有据可查",
+        "data_freshness_explicit": "数据时效已标注",
+        "no_analysis_risk_conflict": "分析与风险无冲突",
+        "no_overstatement": "无过度确定性表述",
+        "action_boundary_appropriate": "行动边界已标注",
+    }
+    parts = []
+    for key, label in labels.items():
+        status = "✓" if checklist.get(key) else "✗"
+        parts.append(f"{status} {label}")
+    return " | ".join(parts)
 
 
 def _extract_existing_critic_status(content: str) -> str:

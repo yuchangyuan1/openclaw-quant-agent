@@ -1,3 +1,4 @@
+from services.planner.models import ApiResponse
 from services.planner.pipeline import (
     classify_intent,
     execute_daily_report_request,
@@ -212,6 +213,21 @@ def test_execute_message_routes_daily_report(monkeypatch):
     assert result.critic_status == "PASS"
     assert "日报已生成" in result.reply_markdown
     assert result.collaboration_agents == ["planner", "knowledge", "quant", "risk", "report", "critic"]
+
+
+def test_classify_intent_roe_uppercase():
+    """Regression: uppercase ROE should trigger QUANT_QUERY, not DOC_QA."""
+    assert classify_intent("请分析ROE大于20%的股票") == "QUANT_QUERY"
+    assert classify_intent("PE估值偏低") == "QUANT_QUERY"
+
+
+def test_api_response_timestamps_are_distinct():
+    """Regression: ApiResponse default timestamp must be per-instance, not class-level."""
+    import time
+    r1 = ApiResponse(success=True)
+    time.sleep(0.01)
+    r2 = ApiResponse(success=True)
+    assert r1.timestamp != r2.timestamp
 
 
 def test_execute_daily_and_weekly_report_request(monkeypatch):

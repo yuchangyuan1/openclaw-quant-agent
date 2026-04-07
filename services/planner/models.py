@@ -40,4 +40,4 @@ class ApiResponse(BaseModel):
     success: bool
     data: dict | None = None
     error: str | None = None
-    timestamp: datetime = datetime.now()
+    timestamp: datetime = Field(default_factory=datetime.now)

@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from services.common.audit import RunLogRepository
+from services.common.ethics import classify_action_boundary, compute_data_freshness, compute_evidence_status
 from services.common.paths import reports_dir
 from services.common.retry import call_with_retry
 from services.common.stocks import load_target_stocks
@@ -371,17 +372,36 @@ def _build_output_summary(
     attempts: dict[str, int],
     collaboration_agents: list[str],
 ) -> dict[str, Any]:
+    critic_status = critic_payload.get("status", "UNKNOWN")
+    risk_status = risk_payload.get("risk_level", "UNKNOWN")
+    evidence_count = len(evidence_payload.get("evidence_pack", []))
+    conflict_detected = bool(critic_payload.get("errors")) or bool(report_payload.get("has_conflicts"))
+    evidence_status = compute_evidence_status(evidence_count, critic_payload.get("warnings") and "low" or None)
+    data_freshness = compute_data_freshness(evidence_payload.get("latest_evidence_date"))
+    action_boundary = classify_action_boundary(
+        intent="DAILY_REPORT", critic_status=critic_status, conflict_detected=conflict_detected,
+        risk_status=risk_status, evidence_count=evidence_count,
+        critic_recommended=critic_payload.get("recommended_action_boundary"),
+    )
     return {
         "report_type": report_payload.get("report_type"),
         "report_date": report_payload.get("report_date"),
         "file_path": report_payload.get("file_path"),
-        "critic_status": critic_payload.get("status"),
-        "evidence_count": len(evidence_payload.get("evidence_pack", [])),
+        "critic_status": critic_status,
+        "evidence_count": evidence_count,
         "latest_evidence_date": evidence_payload.get("latest_evidence_date"),
         "trade_date": quant_payload.get("trade_date"),
-        "risk_level": risk_payload.get("risk_level"),
+        "risk_level": risk_status,
         "attempts": attempts,
         "collaboration_agents": collaboration_agents,
+        # Ethics fields
+        "evidence_status": evidence_status,
+        "freshness_status": data_freshness,
+        "conflict_detected": conflict_detected,
+        "human_approval_required": action_boundary == "requires_human_approval",
+        "action_boundary": action_boundary,
+        "ethics_checklist": critic_payload.get("ethics_checklist"),
+        "overstatement_detected": critic_payload.get("overstatement_detected", False),
     }
 
 

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from services.critic.service import review_report
 from services.planner.main import app as planner_app
 from services.planner.report_pipeline import execute_weekly_report
 from services.report.service import build_report
@@ -67,6 +68,84 @@ def test_execute_weekly_report_aggregates_archived_dailies(tmp_path, monkeypatch
     assert result.evidence_payload["daily_report_count"] == 2
     assert result.evidence_payload["week_range"] == "2026-03-30 to 2026-04-05"
     assert Path(result.report_payload["file_path"]).exists()
+
+
+def test_critic_returns_ethics_checklist():
+    result = review_report(
+        report_payload={
+            "full_content": "数据来源：eastmoney\n数据日期：2026-04-05\n行动边界：informational_only\n人工审批：不需要"
+        },
+        evidence_payload={
+            "evidence_pack": [{"evidence_id": "E001", "title": "测试标题"}],
+            "latest_evidence_date": "2026-04-05",
+        },
+        quant_payload={"stocks": []},
+        risk_payload={"alerts": []},
+    )
+    assert "ethics_checklist" in result
+    checklist = result["ethics_checklist"]
+    assert set(checklist.keys()) == {
+        "claims_supported_by_evidence",
+        "data_freshness_explicit",
+        "no_analysis_risk_conflict",
+        "no_overstatement",
+        "action_boundary_appropriate",
+    }
+    assert all(isinstance(v, bool) for v in checklist.values())
+    assert "overstatement_detected" in result
+    assert "recommended_action_boundary" in result
+    assert result["recommended_action_boundary"] in {"informational_only", "analysis_only"}
+
+
+def test_critic_detects_overstatement():
+    result = review_report(
+        report_payload={
+            "full_content": "推荐买入贵州茅台，数据来源：eastmoney，数据日期：2026-04-05，行动边界：requires_human_approval"
+        },
+        evidence_payload={
+            "evidence_pack": [{"evidence_id": "E001", "title": "测试标题"}],
+            "latest_evidence_date": "2026-04-05",
+        },
+        quant_payload={"stocks": []},
+        risk_payload={"alerts": []},
+    )
+    assert result["overstatement_detected"] is True
+    assert result["status"] == "FAIL"
+    assert result["recommended_action_boundary"] == "informational_only"
+
+
+def test_consistency_check_covers_all_alerts():
+    """Regression: critic must check all alerts, not just the first 2."""
+    result = review_report(
+        report_payload={"full_content": "数据来源：eastmoney\n数据日期：2026-04-05\n告警1\n告警2"},
+        evidence_payload={"evidence_pack": [], "latest_evidence_date": "2026-04-05"},
+        quant_payload={"stocks": []},
+        risk_payload={"alerts": ["告警1", "告警2", "告警3"]},
+    )
+    assert result["consistency_check"] == "FAIL"
+
+
+def test_report_template_renders_ethics_section(tmp_path, monkeypatch):
+    monkeypatch.setenv("REPORTS_DIR", str(tmp_path))
+    payload = build_report(
+        report_type="daily",
+        report_date="2026-04-05",
+        evidence_payload={
+            "evidence_pack": [{"evidence_id": "E001", "title": "测试公告", "source": "eastmoney", "published_at": "2026-04-05"}],
+            "synthesis": "测试综合",
+            "matched_companies": ["600519"],
+            "matched_themes": [],
+            "latest_evidence_date": "2026-04-05",
+        },
+        quant_payload={"trade_date": "2026-04-05", "market_summary": {}, "stocks": []},
+        risk_payload={"risk_level": "LOW", "alerts": [], "industry_breakdown": []},
+        critic_status="PENDING",
+    )
+    content = payload["full_content"]
+    assert "审查与合规" in content
+    assert "行动边界" in content
+    assert "人工审批要求" in content
+    assert "证据状态" in content
 
 
 def test_planner_weekly_report_endpoint_returns_critic_result(tmp_path, monkeypatch):
