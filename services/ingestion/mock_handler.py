@@ -1,8 +1,4 @@
-"""
-Ingestion 服务 Stub 实现（阶段 0）
-返回硬编码 fixture 数据，接口与 docs/mock-stubs.md 对齐。
-阶段 1 实现真实采集逻辑后，替换此文件，router.py 不变。
-"""
+"""Development stub for the ingestion service."""
 
 from datetime import datetime
 
@@ -11,7 +7,7 @@ def trigger_ingest(source: str, date: str | None, stock_codes: list[str]) -> dic
     return {
         "job_id": f"ingest_{(date or datetime.now().strftime('%Y%m%d'))}_stub",
         "status": "queued",
-        "estimated_docs": 120,
+        "estimated_docs": 14,
     }
 
 
@@ -19,10 +15,10 @@ def get_job_status(job_id: str) -> dict:
     return {
         "job_id": job_id,
         "status": "completed",
-        "docs_collected": 118,
-        "docs_failed": 2,
-        "started_at": "2026-04-07T08:30:00+08:00",
-        "finished_at": "2026-04-07T08:35:42+08:00",
+        "docs_collected": 12,
+        "docs_failed": 0,
+        "started_at": "2026-04-08T08:30:00+08:00",
+        "finished_at": "2026-04-08T08:31:42+08:00",
     }
 
 
@@ -36,12 +32,12 @@ def list_documents(
 ) -> dict:
     stub_item = {
         "id": "doc_stub_001",
-        "source": source or "eastmoney",
-        "doc_type": doc_type or "news",
-        "title": "[测试] 贵州茅台发布2026年一季报，净利润同比增长12%",
-        "url": "https://finance.eastmoney.com/stub/001.html",
-        "company_code": stock_code or "600519",
-        "published_at": "2026-04-07T07:45:00+08:00",
+        "source": source or "sec_edgar",
+        "doc_type": doc_type or "filing",
+        "title": "[Stub] Apple files quarterly report",
+        "url": "https://www.sec.gov/Archives/doc_stub_001.html",
+        "company_code": stock_code or "AAPL",
+        "published_at": "2026-04-08T07:45:00+08:00",
         "is_indexed": True,
     }
     return {"total": 1, "items": [stub_item]}

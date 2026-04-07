@@ -1,208 +1,45 @@
-# OpenClaw Multi-Agent Architecture for Quant Research
+# OpenClaw Multi-Agent Architecture for US Market Research
 
-## Positioning
+## 1. Architectural Positioning
 
-This project is an ethics-oriented decision support system built on OpenClaw. The architecture is designed to demonstrate how multi-agent AI systems can maintain evidence grounding, bounded autonomy, and human oversight at every output stage.
+The project uses a pragmatic OpenClaw-native hybrid architecture:
 
-The implemented pattern is:
+- `OpenClaw` is the control plane
+- deterministic `FastAPI` services are the execution plane
+- `Postgres + Lightweight Graph + Chroma` form the data plane
 
-- OpenClaw is the control plane
-- deterministic Python services are the execution plane
-- Postgres, Lightweight Graph, and Chroma form the storage and retrieval plane
-- a cross-cutting ethics layer enforces output contracts, review gates, and audit semantics
+This design keeps business logic testable and auditable while still exposing clear agent boundaries at the OpenClaw layer.
 
-This means:
-
-- OpenClaw handles Feishu entry, cron scheduling, workspace isolation, agent instructions, and orchestration boundaries
-- business correctness stays in auditable services under `services/`
-- agent outputs are constrained by evidence, validated by a mandatory critic gate, and labeled with action boundaries
-- every run produces a structured accountability trail recorded in run logs
-
-## Current Architecture Decision
-
-The project uses a pragmatic OpenClaw-native hybrid model.
-
-### What OpenClaw owns
-
-- inbound routing from Feishu
-- cron-triggered daily and weekly jobs
-- workspace-level role boundaries
-- skill-level shared invocation contracts
-- planner-first orchestration
-
-### What services own
-
-- ingestion and parsing
-- indexing and retrieval
-- quantitative computation
-- risk computation
-- report rendering
-- critic validation
-
-### Why this split was chosen
-
-- more stable than putting all business logic into prompts
-- easier to test and reproduce
-- easier to audit
-- still compatible with future deeper `sessions_spawn` runtime orchestration
-
-## Implemented Agent Map
-
-The current repository and runtime both use six core OpenClaw workspaces:
-
-- `planner`
-- `knowledge`
-- `quant`
-- `risk`
-- `report`
-- `critic`
-
-These definitions live under:
-
-- `openclaw/workspaces/`
-- `openclaw/skills/`
-- `openclaw/runtime/`
-
-The old `agents/` compatibility layer has been removed from the repository.
-
-## Current Responsibility Split
-
-### Planner
-
-Responsibility:
-
-- single public entrypoint
-- intent classification
-- route selection
-- collaboration assembly
-- final answer and report handoff
-
-Current routing paths:
-
-- `DOC_QA`: `Planner -> Knowledge`
-- `QUANT_QUERY`: `Planner -> Quant`
-- `RISK_QUERY`: `Planner -> Risk`
-- `MIXED_QUERY`: `Planner -> parallel(Knowledge, Quant, Risk)`
-- `DAILY_REPORT`: `Planner -> parallel(Knowledge, Quant, Risk) -> Report -> Critic`
-- `WEEKLY_REPORT`: `Planner -> Knowledge + Quant + Risk -> Report -> Critic`
-
-### Knowledge
-
-Responsibility:
-
-- retrieval planning
-- evidence-pack building
-- graph-context expansion
-- evidence-backed synthesis
-
-### Quant
-
-Responsibility:
-
-- technical indicators
-- valuation factors
-- financial factors
-- industry-relative comparison
-- composite scoring
-
-### Risk
-
-Responsibility:
-
-- volatility
-- drawdown
-- beta
-- exposure
-- scenario loss analysis
-
-### Report
-
-Responsibility:
-
-- daily report generation
-- weekly report generation
-- archive-ready markdown rendering
-
-### Critic
-
-Responsibility:
-
-- mandatory 5-point ethics checklist enforcement
-- overstatement and advisory language detection
-- evidence coverage and freshness validation
-- consistency checks between narrative and numeric outputs
-- `recommended_action_boundary` output (can only downgrade, never upgrade)
-- outputs that fail the checklist are automatically set to `informational_only`
-
-## Ethics Layer
-
-The ethics layer is not a separate service. It is implemented as a cross-cutting concern across existing components.
-
-### Output Contract
-
-Every `PlannerResponse` carries seven ethics fields:
-
-- `evidence_status` — `SUFFICIENT` / `PARTIAL` / `INSUFFICIENT` / `NONE`
-- `data_freshness` — `FRESH` (≤3 days) / `ACCEPTABLE` (≤7 days) / `STALE` / `UNKNOWN`
-- `risk_status` — mirrors the risk gate result
-- `conflict_detected` — whether analysis and risk outputs conflict
-- `human_approval_required` — whether human sign-off is required before action
-- `action_boundary` — `informational_only` / `analysis_only` / `requires_human_approval`
-- `accountability_trail` — structured record of agent participation and review results
-
-These fields are populated by `services/common/ethics.py` and exposed in every API response.
-
-### Action Boundary Classification
-
-The `classify_action_boundary()` function applies a deterministic rule table:
-
-1. Critic FAIL → `informational_only`
-2. Conflict detected → `requires_human_approval`
-3. Risk level HIGH/CRITICAL → `requires_human_approval`
-4. Report-type intent → `requires_human_approval`
-5. MIXED_QUERY with sufficient evidence → `analysis_only`
-6. All other cases → `informational_only`
-
-The Critic may further downgrade the boundary but cannot upgrade it.
-
-### Critic as Ethics Gate
-
-The Critic service applies a structured 5-point checklist to every report before delivery. If any item fails or overstatement is detected, it sets `recommended_action_boundary` to `informational_only` and the Planner adopts the more restrictive value. This gate cannot be bypassed.
-
-### Audit Trail
-
-`build_accountability_trail()` in `services/common/ethics.py` produces a structured dict written to run logs via `services/common/audit.py`. Every run is queryable by critic result, risk level, action boundary, and evidence count.
-
-## System Layers
+## 2. Runtime Layers
 
 ```mermaid
 flowchart TB
   subgraph U["Interaction Layer"]
-    FEI["Feishu Bot"]
+    FEI["Feishu"]
     CRON["OpenClaw Cron"]
-    USER["Analyst / PM / User"]
+    USER["Analyst / User"]
   end
 
   subgraph O["OpenClaw Control Layer"]
     GW["Gateway"]
-    RT["Bindings + Routing"]
-    PL["Planner Workspace"]
-    WS["Knowledge / Quant / Risk / Report / Critic Workspaces"]
-    SK["Shared Skills"]
+    ROUTE["Bindings + Routing"]
+    PLAN["Planner Workspace"]
+    SUB["Knowledge / Quant / Risk / Report / Critic Workspaces"]
+    SKILL["Shared Skills"]
   end
 
   subgraph S["Deterministic Service Layer"]
-    ING["Ingestion Service"]
-    RAG["RAG Service"]
+    ING["Ingestion"]
+    RAG["RAG"]
     PLS["Planner Service"]
-    QNT["Quant Service"]
-    RSK["Risk Service"]
-    REP["Report Service"]
-    CRT["Critic Service"]
+    QNT["Quant"]
+    RSK["Risk"]
+    REP["Report"]
+    CRT["Critic"]
   end
 
   subgraph D["Data Layer"]
-    RAW["Raw Documents"]
+    RAW["Raw Filing Cache"]
     PG["Postgres"]
     KG["Lightweight Graph"]
     CH["Chroma"]
@@ -213,22 +50,23 @@ flowchart TB
   USER --> FEI
   FEI --> GW
   CRON --> GW
-  GW --> RT
-  RT --> PL
-  PL --> WS
-  WS --> SK
-  SK --> PLS
-  SK --> RAG
-  SK --> QNT
-  SK --> RSK
-  SK --> REP
-  SK --> CRT
+  GW --> ROUTE
+  ROUTE --> PLAN
+  PLAN --> SUB
+  SUB --> SKILL
+  SKILL --> PLS
+  SKILL --> ING
+  SKILL --> RAG
+  SKILL --> QNT
+  SKILL --> RSK
+  SKILL --> REP
+  SKILL --> CRT
 
   ING --> RAW
   ING --> PG
-  RAG --> CH
   RAG --> PG
   RAG --> KG
+  RAG --> CH
   QNT --> MKT
   QNT --> PG
   RSK --> PG
@@ -237,165 +75,140 @@ flowchart TB
   CRT --> PG
 ```
 
-## Current Storage and Retrieval Model
+## 3. Agent Map
 
-The implemented storage model is no longer the earlier "metadata + optional graph" sketch. It is now:
+The current OpenClaw workspaces are:
 
-- `Postgres`
-  - documents
-  - reports
-  - run logs
-  - graph entities
-  - graph relations
-  - metric snapshots
-  - risk snapshots
-- `Lightweight Knowledge Graph`
-  - built on top of Postgres tables
-  - entity-oriented context expansion for retrieval and answer synthesis
-- `Chroma`
-  - vector search for indexed document chunks
-  - HTTP backend first
-  - local persistence fallback supported
+- `planner`
+- `knowledge`
+- `quant`
+- `risk`
+- `report`
+- `critic`
 
-## Runtime Orchestration Model
+Their definitions live under:
 
-The current project does not force every path through raw OpenClaw-native `sessions_spawn`.
+- `openclaw/workspaces/`
+- `openclaw/skills/`
+- `openclaw/runtime/`
 
-Instead it uses a staged approach:
+## 4. Responsibility Split
 
-### Already implemented
+### Planner
 
-- workspace-level role separation
-- skill-level reusable service contracts
-- planner-led delegated orchestration
-- runtime-level parallel sub-agent style collaboration for:
-  - `MIXED_QUERY`
-  - `DAILY_REPORT`
+- single public entry point
+- intent classification
+- route selection
+- collaboration assembly
+- final response packaging
 
-### Not fully implemented yet
+### Knowledge
 
-- broad direct use of OpenClaw `sessions_spawn` for all multi-agent paths
-- runtime-only execution without service-side orchestration contracts
-- an `ops` workspace for administration and repair workflows
+- retrieval planning
+- evidence-pack generation
+- graph-aware enrichment
+- filing-centric synthesis
 
-This is intentional. The project currently optimizes for reproducibility and stability rather than maximum agent autonomy.
+### Quant
 
-## Daily Report Runtime Flow
+- technical analysis
+- valuation analysis
+- financial analysis
+- industry comparison
+- composite scoring
 
-```mermaid
-sequenceDiagram
-  participant C as OpenClaw Cron
-  participant P as Planner
-  participant K as Knowledge
-  participant Q as Quant
-  participant R as Risk
-  participant G as Report
-  participant V as Critic
-  participant F as Feishu
+### Risk
 
-  C->>P: Start daily report job
-  par Parallel domain work
-    P->>K: Build evidence pack
-    P->>Q: Run technical + fundamental analysis
-    P->>R: Run risk checks
-  end
-  K-->>P: Evidence output
-  Q-->>P: Quant output
-  R-->>P: Risk output
-  P->>G: Build daily report
-  G-->>P: Report draft
-  P->>V: Validate evidence and consistency
-  V-->>P: Review result
-  P->>F: Push summary / archive link
-```
+- drawdown and volatility analysis
+- benchmark-relative risk
+- concentration analysis
+- scenario loss estimation
 
-## Mixed Question Runtime Flow
+### Report
 
-```mermaid
-flowchart LR
-  Q1["Feishu Question"] --> P1["Planner"]
-  P1 --> I1{"Intent"}
-  I1 -->|"DOC_QA"| K1["Knowledge"]
-  I1 -->|"QUANT_QUERY"| Q2["Quant"]
-  I1 -->|"RISK_QUERY"| R2["Risk"]
-  I1 -->|"MIXED_QUERY"| M1["parallel(Knowledge, Quant, Risk)"]
-  K1 --> A1["Planner Merge"]
-  Q2 --> A1
-  R2 --> A1
-  M1 --> A1
-  A1 --> C1["Critic-aware structured answer"]
-  C1 --> F1["Feishu Reply"]
-```
+- daily report generation
+- weekly report generation
+- archive-ready markdown rendering
 
-## OpenClaw-Specific Design Rules
+### Critic
 
-### 1. Planner-first entry
+- evidence sufficiency review
+- freshness review
+- consistency review
+- overstatement review
+- action-boundary recommendation
 
-All Feishu inbound messages and cron jobs enter through `planner`.
+## 5. Implemented Collaboration Paths
 
-### 2. Services remain deterministic
+- `DOC_QA`: `Planner -> Knowledge`
+- `QUANT_QUERY`: `Planner -> Quant`
+- `RISK_QUERY`: `Planner -> Risk`
+- `MIXED_QUERY`: `Planner -> parallel(Knowledge, Quant, Risk)`
+- `DAILY_REPORT`: `Planner -> parallel(Knowledge, Quant, Risk) -> Report -> Critic`
+- `WEEKLY_REPORT`: `Planner -> Knowledge + Quant + Risk -> Report -> Critic`
 
-Quant, risk, indexing, and report rendering stay out of prompt-only logic.
+This means the project already demonstrates real multi-agent collaboration while still keeping deterministic service execution underneath.
 
-### 3. Skills define reusable contracts
+## 6. Data Sources and Universe
 
-Shared service invocation rules live under:
+Current US-market migration choices:
 
-- `openclaw/skills/planner-query`
-- `openclaw/skills/knowledge-retrieve`
-- `openclaw/skills/quant-analysis`
-- `openclaw/skills/risk-analysis`
-- `openclaw/skills/report-build`
-- `openclaw/skills/critic-review`
-- `openclaw/skills/ingest-trigger`
-- `openclaw/skills/runlog-inspect`
+- stock universe: `Magnificent 7`
+- market data: `yfinance`
+- filing source: `SEC EDGAR`
+- benchmark: `SPY`
 
-### 4. Workspace instructions define boundaries
+## 7. Storage Model
 
-Role-specific behavior and playbooks live under:
+### Postgres
 
-- `openclaw/workspaces/*/AGENTS.md`
-- `openclaw/workspaces/*/playbooks/`
+Primary structured storage for:
 
-### 5. Stable before fully autonomous
+- documents
+- reports
+- run logs
+- graph entities
+- graph relations
+- metric snapshots
+- risk snapshots
 
-The current architecture intentionally prefers:
+### Lightweight Graph
 
-- planner-side parallel orchestration
-- deterministic service contracts
-- explicit run logs
+Entity and relation context for:
 
-over:
+- companies
+- industries
+- themes
+- filings
+- document links
 
-- free-form cross-agent reasoning loops
-- heavy prompt-only orchestration
+### Chroma
 
-## Current Status vs Original Vision
+Vector retrieval for indexed filing chunks and evidence search.
 
-The project is now aligned with the original architecture in its main structural ideas:
+## 8. Ethics Layer
 
-- OpenClaw as control plane
-- planner as single entrypoint
-- multiple role-specific workspaces
-- cron-driven scheduled workflows
-- deterministic services for correctness
+The architecture includes a cross-cutting ethics layer rather than a separate ethics microservice.
 
-The main remaining gap is depth of runtime-native sub-agent execution.
+Every major output is expected to surface:
 
-Current state:
+- `evidence_status`
+- `data_freshness`
+- `critic_status`
+- `risk_status`
+- `action_boundary`
+- `human_approval_required`
+- `accountability_trail`
 
-- enough for a working OpenClaw-based project
-- stable for local use, demos, and GitHub submission
-- not yet the final "all-important paths use raw `sessions_spawn`" architecture
+The critic layer is mandatory for report delivery and can only make the final action boundary more restrictive.
 
-## Recommended Next Step
+## 9. Current Architectural Status
 
-No immediate redesign is required for MVP delivery.
+The architecture is already in a stable MVP state for:
 
-If the project later needs a stronger OpenClaw-native identity, the next upgrade should be:
+- GitHub delivery
+- local reproduction
+- OpenClaw workspace demonstration
+- ethics-aware multi-agent orchestration
 
-1. move `MIXED_QUERY` from planner-side parallel contracts to direct runtime `sessions_spawn`
-2. move `DAILY_REPORT` orchestration to explicit sub-agent runs in the OpenClaw runtime
-3. keep deterministic services as the execution backends
-
-This preserves current correctness while increasing visible agent collaboration.
+The main optional future direction is deeper OpenClaw runtime-native execution through richer `sessions_spawn` behavior, not a structural rewrite.

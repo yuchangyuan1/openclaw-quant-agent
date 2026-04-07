@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-_OVERSTATEMENT_PHRASES = ["推荐买入", "强烈建议", "必须买", "一定涨", "确定性机会"]
+_OVERSTATEMENT_PHRASES = [
+    "strong buy",
+    "must buy",
+    "guaranteed upside",
+    "certain gain",
+    "cannot miss",
+]
 
 
 def review_report(
@@ -15,25 +21,25 @@ def review_report(
     warnings: list[str] = []
     errors: list[str] = []
 
-    has_date_marker = "数据日期" in content or "数据区间" in content
-    if "数据来源" not in content or not has_date_marker:
-        errors.append("报告缺少数据来源或数据日期/数据区间字段。")
+    has_date_marker = "Data dates" in content or "Week range" in content or "Trade date" in content
+    if "Data sources" not in content or not has_date_marker:
+        errors.append("Report is missing explicit data-source or data-date fields.")
 
     coverage = _evidence_coverage(content, evidence_payload)
     if coverage < 0.5 and evidence_payload.get("evidence_pack"):
-        warnings.append("报告对 Evidence Pack 的引用覆盖率偏低。")
+        warnings.append("Evidence coverage is low relative to the evidence pack.")
 
     timeliness = _timeliness_check(evidence_payload)
     if timeliness != "PASS":
-        warnings.append("核心证据时效性不足。")
+        warnings.append("Core evidence may be stale.")
 
     consistency = _consistency_check(content, quant_payload, risk_payload)
     if consistency != "PASS":
-        errors.append("风险提示或量化结论与报告正文存在不一致。")
+        errors.append("Risk review or structured-analysis content is inconsistent with the report body.")
 
     overstatement_detected = _overstatement_check(content)
     if overstatement_detected:
-        errors.append("报告包含过度确定性表述或直接投资建议，违反行动边界约束。")
+        errors.append("Report contains overstated or advisory language that exceeds the allowed action boundary.")
 
     if errors:
         status = "FAIL"
@@ -42,7 +48,7 @@ def review_report(
     else:
         status = "PASS"
 
-    ethics_checklist = _ethics_checklist(content, evidence_payload, quant_payload, risk_payload, coverage, consistency)
+    ethics_checklist = _ethics_checklist(content, evidence_payload, coverage, consistency)
     recommended_action_boundary = _recommend_action_boundary(status, overstatement_detected)
 
     return {
@@ -91,48 +97,37 @@ def _consistency_check(content: str, quant_payload: dict, risk_payload: dict) ->
 
     bearish_count = sum(1 for item in quant_payload.get("stocks", []) if item.get("ma_signal") == "bearish")
     bullish_count = sum(1 for item in quant_payload.get("stocks", []) if item.get("ma_signal") == "bullish")
-    if bearish_count > bullish_count and "偏强" in content:
+    if bearish_count > bullish_count and "Bullish trend" in content:
         return "FAIL"
     return "PASS"
 
 
 def _overstatement_check(content: str) -> bool:
-    """Return True if content contains advisory overstatement phrases."""
-    return any(phrase in content for phrase in _OVERSTATEMENT_PHRASES)
+    lowered = content.lower()
+    return any(phrase in lowered for phrase in _OVERSTATEMENT_PHRASES)
 
 
-def _ethics_checklist(
-    content: str,
-    evidence_payload: dict,
-    quant_payload: dict,
-    risk_payload: dict,
-    coverage: float,
-    consistency: str,
-) -> dict:
-    """Evaluate structured 5-point ethics checklist."""
+def _ethics_checklist(content: str, evidence_payload: dict, coverage: float, consistency: str) -> dict:
     return {
         "claims_supported_by_evidence": coverage >= 0.5,
-        "data_freshness_explicit": ("数据日期" in content or "数据区间" in content),
+        "data_freshness_explicit": ("Data dates" in content or "Week range" in content or "Trade date" in content),
         "no_analysis_risk_conflict": consistency == "PASS",
         "no_overstatement": not _overstatement_check(content),
-        "action_boundary_appropriate": ("行动边界" in content or "人工审批" in content),
+        "action_boundary_appropriate": ("Action boundary" in content or "Human approval required" in content),
     }
 
 
 def _recommend_action_boundary(status: str, overstatement_detected: bool) -> str:
-    """Recommend the most appropriate action boundary based on critic findings."""
     if status == "FAIL" or overstatement_detected:
         return "informational_only"
-    if status == "PASS_WITH_WARNINGS":
-        return "analysis_only"
     return "analysis_only"
 
 
 def _summary(status: str, warnings: list[str], errors: list[str], overstatement_detected: bool = False) -> str:
     if status == "FAIL":
         if overstatement_detected:
-            return "报告包含过度投资建议表述，已降级为仅供参考，需要人工审查后方可使用。"
-        return "报告存在关键校验失败项，需要修正后再使用。"
+            return "The report used overstated or advisory language and has been downgraded to informational use only."
+        return "The report failed one or more critical review checks and must be corrected before reuse."
     if warnings:
-        return "报告通过校验，但存在需要注意的覆盖率或时效性提示。"
-    return "报告通过校验，主要结论与输入证据保持一致。"
+        return "The report passed review with warnings about evidence coverage or timeliness."
+    return "The report passed review and remains consistent with the supplied evidence and analysis."

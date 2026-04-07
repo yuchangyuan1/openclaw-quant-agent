@@ -50,18 +50,18 @@ def test_build_index_reports_vector_backend(monkeypatch):
         lambda **kwargs: [
             {
                 "id": "doc-1",
-                "source": "eastmoney",
-                "doc_type": "announcement",
-                "title": "测试公告",
+                "source": "sec_edgar",
+                "doc_type": "filing",
+                "title": "Apple quarterly filing",
                 "url": "https://example.com/doc-1",
                 "file_path": "",
-                "company_code": "600519",
+                "company_code": "AAPL",
                 "published_at": "2026-04-06",
                 "is_indexed": False,
             }
         ],
     )
-    monkeypatch.setattr(rag_service, "_load_raw", lambda document: {"content": "测试内容", "metadata": {}})
+    monkeypatch.setattr(rag_service, "_load_raw", lambda document: {"content": "Test filing content", "metadata": {}})
     monkeypatch.setattr(rag_service._GRAPH_REPO, "sync_document_graph", lambda document, raw: {"entities": 1, "relations": 1})
     monkeypatch.setattr(rag_service.chroma_client, "upsert_documents", lambda docs: (True, None))
     monkeypatch.setattr(rag_service.chroma_client, "get_status", lambda: {"backend": "persistent", "error": None})

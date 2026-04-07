@@ -15,8 +15,8 @@ def _patch_quant_fundamentals(monkeypatch):
     def fake_load_fundamental_snapshot(code: str, **_kwargs):
         return FundamentalSnapshot(
             code=code,
-            name="测试股票",
-            industry="测试行业",
+            name=f"{code} Test Corp",
+            industry="Technology",
             report_period="2025-12-31",
             data_date="2025-12-31",
             fetched_at="2026-04-06T10:00:00",
@@ -61,6 +61,33 @@ def _patch_quant_fundamentals(monkeypatch):
     monkeypatch.setattr(quant_market_data, "build_industry_comparison", fake_build_industry_comparison)
 
 
+def _patch_market_history(monkeypatch):
+    data = {
+        "AAPL": 180.0,
+        "MSFT": 390.0,
+    }
+
+    def fake_load_price_history(code: str, *_, **__):
+        base = data.get(code.upper())
+        if base is None:
+            return quant_market_data.pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
+        dates = quant_market_data.pd.bdate_range("2026-03-01", "2026-04-03")
+        rows = [
+            {
+                "date": trade_date,
+                "open": base + idx - 1,
+                "close": base + idx,
+                "high": base + idx + 1,
+                "low": base + idx - 2,
+                "volume": 1_000_000 + idx * 1_000,
+            }
+            for idx, trade_date in enumerate(dates)
+        ]
+        return quant_market_data.pd.DataFrame(rows)
+
+    monkeypatch.setattr(quant_market_data, "load_price_history", fake_load_price_history)
+
+
 def test_ingestion_health():
     client = TestClient(ingestion_app)
     response = client.get("/health")
@@ -72,7 +99,7 @@ def test_ingestion_trigger_stub_contract():
     client = TestClient(ingestion_app)
     response = client.post(
         "/api/v1/ingest/trigger",
-        json={"source": "all", "date": "2026-04-07", "stock_codes": ["600519"]},
+        json={"source": "all", "date": "2026-04-07", "stock_codes": ["AAPL"]},
     )
     data = response.json()
     assert response.status_code == 200
@@ -85,9 +112,9 @@ def test_rag_retrieve_stub_contract():
     response = client.post(
         "/api/v1/retrieve",
         json={
-            "query": "贵州茅台一季报净利润",
-            "stock_codes": ["600519"],
-            "doc_types": ["news"],
+            "query": "Apple latest filing",
+            "stock_codes": ["AAPL"],
+            "doc_types": ["filing"],
             "date_range": {"start": "2026-04-01", "end": "2026-04-07"},
             "top_k": 5,
             "min_score": 0.7,
@@ -102,10 +129,11 @@ def test_rag_retrieve_stub_contract():
 
 def test_quant_daily_stub_contract(monkeypatch):
     _patch_quant_fundamentals(monkeypatch)
+    _patch_market_history(monkeypatch)
     client = TestClient(quant_app)
     response = client.post(
         "/api/v1/quant/daily",
-        json={"stock_codes": ["600519", "300750"], "date": "2026-04-07", "indicators": []},
+        json={"stock_codes": ["AAPL", "MSFT"], "date": "2026-04-07", "indicators": []},
     )
     data = response.json()
     assert response.status_code == 200
@@ -121,10 +149,10 @@ def test_risk_check_stub_contract():
         "/api/v1/risk/check",
         json={
             "portfolio": [
-                {"code": "600519", "weight": 0.05},
-                {"code": "300750", "weight": 0.08},
+                {"code": "AAPL", "weight": 0.05},
+                {"code": "MSFT", "weight": 0.08},
             ],
-            "benchmark": "000300",
+            "benchmark": "SPY",
             "lookback_days": 90,
             "run_scenarios": True,
         },
@@ -140,7 +168,7 @@ def test_planner_query_contract():
     client = TestClient(planner_app)
     response = client.post(
         "/api/v1/planner/query",
-        json={"message": "贵州茅台近期公告", "refresh_index": False},
+        json={"message": "Apple latest filing", "refresh_index": False},
     )
     data = response.json()
     assert response.status_code == 200
@@ -153,11 +181,11 @@ def test_planner_query_report_routing_contract():
     client = TestClient(planner_app)
     daily_response = client.post(
         "/api/v1/planner/query",
-        json={"message": "请生成今日日报", "refresh_index": False},
+        json={"message": "Please generate today's daily report", "refresh_index": False},
     )
     weekly_response = client.post(
         "/api/v1/planner/query",
-        json={"message": "请生成本周周报", "refresh_index": False},
+        json={"message": "Please generate this week's weekly report", "refresh_index": False},
     )
     daily = daily_response.json()
     weekly = weekly_response.json()
@@ -167,8 +195,8 @@ def test_planner_query_report_routing_contract():
     assert weekly["success"] is True
     assert daily["data"]["intent"] == "DAILY_REPORT"
     assert weekly["data"]["intent"] == "WEEKLY_REPORT"
-    assert "已生成" in daily["data"]["reply_markdown"]
-    assert "已生成" in weekly["data"]["reply_markdown"]
+    assert "generated" in daily["data"]["reply_markdown"].lower()
+    assert "generated" in weekly["data"]["reply_markdown"].lower()
 
 
 def test_planner_run_logs_contract():
@@ -198,7 +226,7 @@ def test_report_build_contract():
         json={
             "report_type": "daily",
             "report_date": "2026-04-05",
-            "evidence_payload": {"evidence_pack": [], "synthesis": "暂无", "matched_companies": [], "matched_themes": []},
+            "evidence_payload": {"evidence_pack": [], "synthesis": "No major filing found.", "matched_companies": [], "matched_themes": []},
             "quant_payload": {"trade_date": "2026-04-03", "market_summary": {}, "stocks": []},
             "risk_payload": {"risk_level": "MEDIUM", "alerts": [], "industry_breakdown": []},
             "critic_status": "PENDING",
@@ -216,7 +244,7 @@ def test_critic_review_contract():
     response = client.post(
         "/api/v1/critic/review",
         json={
-            "report_payload": {"full_content": "数据来源：eastmoney\n数据日期：2026-04-05\nCritic 校验：PENDING\n风险提示：无"},
+            "report_payload": {"full_content": "Data sources: sec_edgar\nData dates: 2026-04-05\nCritic status: PENDING\nRisk review: no critical alert"},
             "evidence_payload": {"evidence_pack": [], "latest_evidence_date": "2026-04-05"},
             "quant_payload": {"stocks": []},
             "risk_payload": {"alerts": []},

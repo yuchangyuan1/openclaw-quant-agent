@@ -9,7 +9,6 @@ from services.common.ethics import (
 )
 from services.planner.pipeline import PlannerResponse
 
-
 # ── Evidence status ──────────────────────────────────────────────────────────
 
 def test_compute_evidence_status_none():
@@ -41,12 +40,11 @@ def test_compute_data_freshness_unknown_bad_format():
 def test_compute_data_freshness_fresh(monkeypatch):
     import datetime
     from unittest.mock import patch
-    fixed_today = datetime.date(2026, 4, 8)
 
     class FakeDatetime(datetime.datetime):
         @classmethod
         def now(cls, tz=None):
-            return datetime.datetime(2026, 4, 8, 12, 0, 0, tzinfo=datetime.timezone.utc)
+            return datetime.datetime(2026, 4, 8, 12, 0, 0, tzinfo=datetime.UTC)
 
     with patch("services.common.ethics.datetime", FakeDatetime):
         assert compute_data_freshness("2026-04-07") == "FRESH"

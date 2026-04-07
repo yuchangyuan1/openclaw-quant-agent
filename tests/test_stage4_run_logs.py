@@ -33,9 +33,9 @@ def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
             {
                 "agent_id": "knowledge",
                 "payload": {
-                    "evidence_pack": [{"evidence_id": "E001", "title": "测试新闻", "source": "eastmoney", "published_at": "2026-04-05"}],
-                    "synthesis": "测试结论",
-                    "matched_companies": ["600519"],
+                    "evidence_pack": [{"evidence_id": "E001", "title": "Apple 10-Q", "source": "sec_edgar", "published_at": "2026-04-05"}],
+                    "synthesis": "Test conclusion",
+                    "matched_companies": ["AAPL"],
                     "matched_themes": [],
                     "latest_evidence_date": "2026-04-05",
                 },
@@ -51,8 +51,8 @@ def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
                 "agent_id": "quant",
                 "payload": {
                     "trade_date": "2026-04-03",
-                    "market_summary": {"sh300_pct_change": 0.5, "total_volume_billion": 12.3, "advancing_stocks": 2, "declining_stocks": 1},
-                    "stocks": [{"code": "600519", "name": "贵州茅台", "close": 1460.0, "pct_change": 0.01, "ma5": 1449.0, "ma20": 1430.0, "ma_signal": "bullish"}],
+                    "market_summary": {"tracked_avg_pct_change": 0.5, "advancing_stocks": 2, "declining_stocks": 1},
+                    "stocks": [{"code": "AAPL", "name": "Apple Inc.", "close": 210.0, "pct_change": 0.01, "ma5": 209.0, "ma20": 205.0, "ma_signal": "bullish"}],
                 },
             },
         )(),
@@ -64,12 +64,12 @@ def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
             (),
             {
                 "agent_id": "risk",
-                "payload": {"risk_level": "MEDIUM", "alerts": ["行业集中度偏高"], "industry_breakdown": [{"industry": "食品饮料", "weight": 0.4}]},
+                "payload": {"risk_level": "MEDIUM", "alerts": ["Consumer electronics exposure is concentrated."], "industry_breakdown": [{"industry": "Consumer Electronics", "weight": 0.4}]},
             },
         )(),
     )
 
-    result = execute_daily_report(report_date="2026-04-05", stock_codes=["600519"])
+    result = execute_daily_report(report_date="2026-04-05", stock_codes=["AAPL"])
     assert result.run_log_id
     assert result.attempts == {"knowledge": 1, "quant": 1, "risk": 1, "report": 1, "critic": 1, "finalize": 1}
 
@@ -123,7 +123,7 @@ def test_planner_replay_endpoint_replays_daily_run(tmp_path, monkeypatch):
                     "job_id": "daily_report:2026-04-05:1",
                     "job_type": "daily_report",
                     "status": "failed",
-                    "input_params": {"report_date": "2026-04-05", "stock_codes": ["600519"]},
+                    "input_params": {"report_date": "2026-04-05", "stock_codes": ["AAPL"]},
                     "output_summary": None,
                     "error_message": "boom",
                     "started_at": "2026-04-05T08:00:00+00:00",

@@ -6,20 +6,20 @@ from services.rag.knowledge_pipeline import build_evidence_pack
 def test_extract_document_graph_builds_company_theme_and_industry_edges():
     document = {
         "id": "doc-1",
-        "source": "eastmoney",
-        "doc_type": "announcement",
-        "title": "贵州茅台关于年度分红的公告",
-        "url": "https://example.com/doc-1",
-        "company_code": "600519",
+        "source": "sec_edgar",
+        "doc_type": "filing",
+        "title": "Apple files quarterly report",
+        "url": "https://www.sec.gov/Archives/doc-1",
+        "company_code": "AAPL",
         "published_at": "2026-04-06",
     }
     raw = {
-        "content": "贵州茅台公告提到白酒消费复苏。",
+        "content": "Apple discussed AI features, services growth, and hardware demand.",
         "metadata": {
-            "primary_company_code": "600519",
-            "matched_stocks": [{"code": "600519", "name": "贵州茅台"}],
-            "matched_themes": ["消费复苏"],
-            "company_terms": ["贵州茅台"],
+            "primary_company_code": "AAPL",
+            "matched_stocks": [{"code": "AAPL", "name": "Apple Inc."}],
+            "matched_themes": ["Consumer Platforms"],
+            "company_terms": ["Apple"],
         },
     }
 
@@ -30,12 +30,12 @@ def test_extract_document_graph_builds_company_theme_and_industry_edges():
         for item in graph["relations"]
     }
 
-    assert ("company", "600519") in entity_keys
-    assert ("theme", "消费复苏") in entity_keys
-    assert ("industry", "食品饮料") in entity_keys
-    assert ("company", "announced_in", "announcement", "doc-1") in relation_keys
-    assert ("company", "belongs_to_industry", "industry", "食品饮料") in relation_keys
-    assert ("company", "has_theme", "theme", "消费复苏") in relation_keys
+    assert ("company", "AAPL") in entity_keys
+    assert ("theme", "consumerplatforms") in entity_keys
+    assert ("industry", "consumerelectronics") in entity_keys
+    assert ("company", "mentioned_in", "filing", "doc-1") in relation_keys
+    assert ("company", "belongs_to_industry", "industry", "consumerelectronics") in relation_keys
+    assert ("company", "has_theme", "theme", "consumerplatforms") in relation_keys
 
 
 def test_retrieve_returns_graph_context(monkeypatch):
@@ -45,16 +45,16 @@ def test_retrieve_returns_graph_context(monkeypatch):
         lambda *args, **kwargs: [
             {
                 "doc_id": "doc-1",
-                "title": "贵州茅台公告",
-                "source": "eastmoney",
-                "url": "https://example.com/doc-1",
+                "title": "Apple 10-Q",
+                "source": "sec_edgar",
+                "url": "https://www.sec.gov/Archives/doc-1",
                 "published_at": "2026-04-06",
-                "company_code": "600519",
-                "snippet": "公告摘要",
+                "company_code": "AAPL",
+                "snippet": "Quarterly filing summary",
                 "score": 0.88,
                 "retrieval_method": "keyword",
-                "matched_themes": ["消费复苏"],
-                "matched_stocks": ["600519"],
+                "matched_themes": ["Consumer Platforms"],
+                "matched_stocks": ["AAPL"],
             }
         ],
     )
@@ -65,10 +65,10 @@ def test_retrieve_returns_graph_context(monkeypatch):
         lambda **kwargs: [
             {
                 "id": "doc-1",
-                "title": "贵州茅台公告",
-                "source": "eastmoney",
-                "doc_type": "announcement",
-                "company_code": "600519",
+                "title": "Apple 10-Q",
+                "source": "sec_edgar",
+                "doc_type": "filing",
+                "company_code": "AAPL",
                 "published_at": "2026-04-06",
                 "file_path": "",
             }
@@ -78,27 +78,27 @@ def test_retrieve_returns_graph_context(monkeypatch):
         rag_service._GRAPH_REPO,
         "get_graph_context",
         lambda **kwargs: {
-            "companies": [{"type": "company", "key": "600519", "name": "贵州茅台", "metadata": {}}],
-            "themes": [{"type": "theme", "key": "消费复苏", "name": "消费复苏", "metadata": {}}],
-            "industries": [{"type": "industry", "key": "食品饮料", "name": "食品饮料", "metadata": {}}],
-            "relations": [{"src": "贵州茅台", "relation_type": "has_theme", "dst": "消费复苏"}],
+            "companies": [{"type": "company", "key": "AAPL", "name": "Apple Inc.", "metadata": {}}],
+            "themes": [{"type": "theme", "key": "Consumer Platforms", "name": "Consumer Platforms", "metadata": {}}],
+            "industries": [{"type": "industry", "key": "Consumer Electronics", "name": "Consumer Electronics", "metadata": {}}],
+            "relations": [{"src": "Apple Inc.", "relation_type": "has_theme", "dst": "Consumer Platforms"}],
             "doc_entity_counts": {"company": 1, "theme": 1},
         },
     )
 
     payload = rag_service.retrieve(
-        query="贵州茅台近期公告",
-        stock_codes=["600519"],
-        company_terms=["贵州茅台"],
-        doc_types=["announcement"],
+        query="Apple latest filing",
+        stock_codes=["AAPL"],
+        company_terms=["Apple"],
+        doc_types=["filing"],
         date_range={"start": "2026-04-01", "end": "2026-04-06"},
         top_k=5,
         min_score=0.2,
     )
 
     assert payload["results"][0]["doc_id"] == "doc-1"
-    assert payload["graph_context"]["companies"][0]["name"] == "贵州茅台"
-    assert payload["graph_context"]["themes"][0]["name"] == "消费复苏"
+    assert payload["graph_context"]["companies"][0]["name"] == "Apple Inc."
+    assert payload["graph_context"]["themes"][0]["name"] == "Consumer Platforms"
 
 
 def test_build_evidence_pack_merges_graph_context(monkeypatch):
@@ -108,15 +108,15 @@ def test_build_evidence_pack_merges_graph_context(monkeypatch):
             "results": [
                 {
                     "doc_id": "doc-1",
-                    "title": "贵州茅台公告",
-                    "source": "eastmoney",
-                    "url": "https://example.com/doc-1",
+                    "title": "Apple 10-Q",
+                    "source": "sec_edgar",
+                    "url": "https://www.sec.gov/Archives/doc-1",
                     "published_at": "2026-04-06",
-                    "company_code": "600519",
-                    "snippet": "公告摘要",
+                    "company_code": "AAPL",
+                    "snippet": "Quarterly filing summary",
                     "score": 0.91,
-                    "matched_themes": ["消费复苏"],
-                    "matched_stocks": ["600519"],
+                    "matched_themes": ["Consumer Platforms"],
+                    "matched_stocks": ["AAPL"],
                 }
             ],
             "graph_context": build_graph_context_payload(
@@ -124,8 +124,8 @@ def test_build_evidence_pack_merges_graph_context(monkeypatch):
                     {
                         "id": "company-1",
                         "entity_type": "company",
-                        "entity_key": "600519",
-                        "name": "贵州茅台",
+                        "entity_key": "AAPL",
+                        "name": "Apple Inc.",
                         "metadata_json": {},
                     }
                 ],
@@ -135,5 +135,5 @@ def test_build_evidence_pack_merges_graph_context(monkeypatch):
         },
     )
 
-    payload = build_evidence_pack("贵州茅台近期公告", stock_codes=["600519"], min_score=0.1)
-    assert payload["graph_context"]["companies"][0]["name"] == "贵州茅台"
+    payload = build_evidence_pack("Apple latest filing", stock_codes=["AAPL"], min_score=0.1)
+    assert payload["graph_context"]["companies"][0]["name"] == "Apple Inc."

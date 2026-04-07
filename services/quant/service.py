@@ -5,8 +5,8 @@ from datetime import date
 from services.common.graph import GraphRepository
 from services.common.paths import metadata_dir
 
-from .akshare_fetcher import fetch_daily_hist, save_to_parquet
 from .market_data import build_snapshot, compute_factor_payload, load_price_history, market_data_dir
+from .market_fetcher import fetch_daily_hist, save_to_parquet
 
 _GRAPH_REPO = GraphRepository(metadata_dir() / "graph_manifest.json")
 
@@ -101,12 +101,14 @@ def daily_summary(stock_codes: list[str], trade_date: str | None, indicators: li
     return {
         "trade_date": max((item.data_date for item in snapshots), default=resolved_trade_date),
         "market_summary": {
+            "tracked_avg_pct_change": avg_pct_change,
             "sh300_pct_change": avg_pct_change,
-            "total_volume_billion": round(total_volume / 10000, 2),
+            "total_volume_million": round(total_volume / 1_000_000, 2),
+            "total_volume_billion": round(total_volume / 1_000_000_000, 4),
             "advancing_stocks": advancing,
             "declining_stocks": declining,
             "coverage_count": len(snapshots),
-            "data_source": "market_parquet_plus_fundamental_cache",
+            "data_source": "yfinance_market_cache_plus_fundamental_cache",
         },
         "stocks": stock_payload,
         "requested_trade_date": resolved_trade_date,

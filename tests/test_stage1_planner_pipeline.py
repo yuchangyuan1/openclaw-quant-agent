@@ -1,3 +1,5 @@
+import time
+
 from services.planner.models import ApiResponse
 from services.planner.pipeline import (
     classify_intent,
@@ -12,47 +14,47 @@ from services.planner.pipeline import (
 
 
 def test_classify_intent_defaults_to_doc_qa():
-    assert classify_intent("贵州茅台近期公告") == "DOC_QA"
+    assert classify_intent("Apple latest filing") == "DOC_QA"
 
 
 def test_classify_intent_risk_query():
-    assert classify_intent("当前组合最大回撤风险如何？") == "RISK_QUERY"
+    assert classify_intent("What is the portfolio drawdown risk?") == "RISK_QUERY"
 
 
 def test_classify_intent_daily_and_weekly_report():
-    assert classify_intent("请生成今日日报") == "DAILY_REPORT"
-    assert classify_intent("请生成本周周报") == "WEEKLY_REPORT"
+    assert classify_intent("Please generate today's daily report") == "DAILY_REPORT"
+    assert classify_intent("Please generate this week's weekly report") == "WEEKLY_REPORT"
 
 
 def test_format_doc_qa_reply_contains_required_fields():
     reply = format_doc_qa_reply(
-        "测试问题",
+        "Apple latest filing",
         {
-            "synthesis": "根据现有证据...[E001]",
+            "synthesis": "Current evidence indicates services growth remained resilient [E001].",
             "coverage_warning": None,
             "latest_evidence_date": "2026-04-05",
-            "company_terms": ["贵州茅台"],
-            "matched_companies": ["600519"],
-            "matched_themes": ["AI算力"],
-            "evidence_pack": [{"source": "eastmoney"}],
+            "company_terms": ["Apple"],
+            "matched_companies": ["AAPL"],
+            "matched_themes": ["Consumer Platforms"],
+            "evidence_pack": [{"source": "sec_edgar"}],
             "graph_context": {
-                "companies": [{"name": "贵州茅台"}],
-                "themes": [{"name": "AI算力"}],
-                "industries": [{"name": "食品饮料"}],
-                "relations": [{"src": "贵州茅台", "relation_type": "has_theme", "dst": "AI算力"}],
+                "companies": [{"name": "Apple Inc."}],
+                "themes": [{"name": "Consumer Platforms"}],
+                "industries": [{"name": "Consumer Electronics"}],
+                "relations": [{"src": "Apple Inc.", "relation_type": "has_theme", "dst": "Consumer Platforms"}],
             },
         },
     )
-    assert "**查询公司词项**" in reply
-    assert "**研究命中公司**" in reply
-    assert "贵州茅台(600519)" in reply
-    assert "**研究命中主题**" in reply
-    assert "**图谱关联公司**" in reply
-    assert "**图谱关联行业**" in reply
-    assert "**证据数量**" in reply
-    assert "**数据来源**" in reply
-    assert "**Critic 校验**" in reply
-    assert "**协作路径**：Planner -> Knowledge" in reply
+    assert "**Query company terms**" in reply
+    assert "**Matched companies**" in reply
+    assert "Apple (AAPL)" in reply
+    assert "**Matched themes**" in reply
+    assert "**Graph-related companies**" in reply
+    assert "**Graph-related industries**" in reply
+    assert "**Evidence count**" in reply
+    assert "**Data sources**" in reply
+    assert "**Critic status**" in reply
+    assert "**Collaboration path**: Planner -> Knowledge" in reply
 
 
 def test_execute_doc_qa_returns_planner_response(monkeypatch):
@@ -69,23 +71,23 @@ def test_execute_doc_qa_returns_planner_response(monkeypatch):
                 "payload": {
                     "evidence_pack": [
                         {
-                            "source": "eastmoney",
-                            "title": "测试标题",
+                            "source": "sec_edgar",
+                            "title": "Apple 10-Q",
                             "published_at": "2026-04-05",
-                            "company_code": "600519",
-                            "matched_themes": ["白酒"],
+                            "company_code": "AAPL",
+                            "matched_themes": ["Consumer Platforms"],
                         }
                     ],
-                    "synthesis": "根据现有证据，[E001] 提供了直接说明。",
+                    "synthesis": "Current evidence [E001] points to steady demand and resilient services growth.",
                     "latest_evidence_date": "2026-04-05",
                     "company_terms": kwargs["company_terms"],
-                    "matched_companies": ["600519"],
-                    "matched_themes": ["白酒"],
+                    "matched_companies": ["AAPL"],
+                    "matched_themes": ["Consumer Platforms"],
                     "graph_context": {
-                        "companies": [{"name": "贵州茅台"}],
-                        "themes": [{"name": "白酒"}],
-                        "industries": [{"name": "食品饮料"}],
-                        "relations": [{"src": "贵州茅台", "relation_type": "belongs_to_industry", "dst": "食品饮料"}],
+                        "companies": [{"name": "Apple Inc."}],
+                        "themes": [{"name": "Consumer Platforms"}],
+                        "industries": [{"name": "Consumer Electronics"}],
+                        "relations": [{"src": "Apple Inc.", "relation_type": "belongs_to_industry", "dst": "Consumer Electronics"}],
                     },
                     "coverage_warning": None,
                 },
@@ -94,15 +96,15 @@ def test_execute_doc_qa_returns_planner_response(monkeypatch):
 
     monkeypatch.setattr("services.planner.pipeline.run_knowledge_agent", fake_run_knowledge_agent)
 
-    result = execute_doc_qa("贵州茅台近期公告")
+    result = execute_doc_qa("Apple latest filing")
     assert result.intent == "DOC_QA"
     assert result.reply_markdown
-    assert "图谱关联公司" in result.reply_markdown
-    assert captured["company_terms"] == ["贵州茅台"]
-    assert result.company_terms == ["贵州茅台"]
-    assert result.matched_companies == ["600519"]
-    assert result.matched_company_names == ["贵州茅台"]
-    assert result.matched_themes == ["白酒"]
+    assert "Graph-related companies" in result.reply_markdown
+    assert captured["company_terms"] == ["Apple"]
+    assert result.company_terms == ["Apple"]
+    assert result.matched_companies == ["AAPL"]
+    assert result.matched_company_names == ["Apple"]
+    assert result.matched_themes == ["Consumer Platforms"]
     assert result.collaboration_agents == ["planner", "knowledge"]
 
 
@@ -119,21 +121,21 @@ def test_execute_doc_qa_extracts_non_pool_company_terms(monkeypatch):
                 "agent_id": "knowledge",
                 "payload": {
                     "evidence_pack": [],
-                    "synthesis": "根据现有证据，暂未检索到直接相关资料。",
+                    "synthesis": "No directly relevant evidence was found.",
                     "latest_evidence_date": None,
                     "company_terms": kwargs["company_terms"],
                     "matched_companies": [],
                     "matched_themes": [],
                     "graph_context": {"companies": [], "themes": [], "industries": [], "relations": []},
-                    "coverage_warning": "未找到相关文档",
+                    "coverage_warning": "No relevant filing was found.",
                 },
             },
         )()
 
     monkeypatch.setattr("services.planner.pipeline.run_knowledge_agent", fake_run_knowledge_agent)
 
-    result = execute_doc_qa("兴发集团利润分配预案公告")
-    assert result.company_terms == ["兴发集团", "兴发"]
+    result = execute_doc_qa("Palantir earnings update")
+    assert result.company_terms == ["Palantir"]
     assert captured["stock_codes"] == []
 
 
@@ -148,9 +150,9 @@ def test_execute_quant_query_uses_quant_collaboration(monkeypatch):
                     "trade_date": "2026-04-03",
                     "stocks": [
                         {
-                            "code": "600519",
-                            "name": "贵州茅台",
-                            "close": 1460.0,
+                            "code": "AAPL",
+                            "name": "Apple Inc.",
+                            "close": 210.0,
                             "pct_change": 0.01,
                             "pe_ttm": 21.2,
                             "roe": 24.6,
@@ -162,9 +164,9 @@ def test_execute_quant_query_uses_quant_collaboration(monkeypatch):
         )()
 
     monkeypatch.setattr("services.planner.pipeline.run_quant_agent", fake_run_quant_agent)
-    result = execute_quant_query("贵州茅台量化指标")
+    result = execute_quant_query("Apple valuation and momentum")
     assert result.intent == "QUANT_QUERY"
-    assert "协作路径：Planner -> Quant" in result.reply_markdown
+    assert "Collaboration path: Planner -> Quant" in result.reply_markdown
     assert result.collaboration_agents == ["planner", "quant"]
 
 
@@ -175,14 +177,14 @@ def test_execute_risk_query_uses_risk_collaboration(monkeypatch):
             (),
             {
                 "agent_id": "risk",
-                "payload": {"risk_level": "MEDIUM", "alerts": ["行业集中度偏高"]},
+                "payload": {"risk_level": "MEDIUM", "alerts": ["Technology concentration is elevated."]},
             },
         )()
 
     monkeypatch.setattr("services.planner.pipeline.run_risk_agent", fake_run_risk_agent)
-    result = execute_risk_query("贵州茅台持仓风险")
+    result = execute_risk_query("Apple portfolio risk")
     assert result.intent == "RISK_QUERY"
-    assert "协作路径：Planner -> Risk" in result.reply_markdown
+    assert "Collaboration path: Planner -> Risk" in result.reply_markdown
     assert result.collaboration_agents == ["planner", "risk"]
 
 
@@ -202,28 +204,25 @@ def test_execute_message_routes_daily_report(monkeypatch):
                 "evidence_payload": {
                     "evidence_pack": [{"source": "daily_report_archive"}],
                     "latest_evidence_date": "2026-04-06",
-                    "matched_companies": ["600519"],
+                    "matched_companies": ["AAPL"],
                     "matched_themes": [],
                 },
             },
         )(),
     )
-    result = execute_message("请生成贵州茅台日报", refresh_index=False)
+    result = execute_message("Please generate Apple's daily report", refresh_index=False)
     assert result.intent == "DAILY_REPORT"
     assert result.critic_status == "PASS"
-    assert "日报已生成" in result.reply_markdown
+    assert "daily report generated" in result.reply_markdown.lower()
     assert result.collaboration_agents == ["planner", "knowledge", "quant", "risk", "report", "critic"]
 
 
 def test_classify_intent_roe_uppercase():
-    """Regression: uppercase ROE should trigger QUANT_QUERY, not DOC_QA."""
-    assert classify_intent("请分析ROE大于20%的股票") == "QUANT_QUERY"
-    assert classify_intent("PE估值偏低") == "QUANT_QUERY"
+    assert classify_intent("Find companies with ROE above 20%") == "QUANT_QUERY"
+    assert classify_intent("PE valuation looks compressed") == "QUANT_QUERY"
 
 
 def test_api_response_timestamps_are_distinct():
-    """Regression: ApiResponse default timestamp must be per-instance, not class-level."""
-    import time
     r1 = ApiResponse(success=True)
     time.sleep(0.01)
     r2 = ApiResponse(success=True)
@@ -244,9 +243,9 @@ def test_execute_daily_and_weekly_report_request(monkeypatch):
                 },
                 "critic_payload": {"status": "PASS_WITH_WARNINGS"},
                 "evidence_payload": {
-                    "evidence_pack": [{"source": "eastmoney"}],
+                    "evidence_pack": [{"source": "sec_edgar"}],
                     "latest_evidence_date": "2026-04-06",
-                    "matched_companies": ["600519"],
+                    "matched_companies": ["AAPL"],
                     "matched_themes": [],
                 },
             },
@@ -267,7 +266,7 @@ def test_execute_daily_and_weekly_report_request(monkeypatch):
                 "evidence_payload": {
                     "evidence_pack": [{"source": "daily_report_archive"}],
                     "latest_evidence_date": "2026-04-06",
-                    "matched_companies": ["600519", "300750"],
+                    "matched_companies": ["AAPL", "NVDA"],
                     "matched_themes": [],
                     "data_dates_label": "2026-03-30 to 2026-04-05",
                 },
@@ -275,8 +274,8 @@ def test_execute_daily_and_weekly_report_request(monkeypatch):
         )(),
     )
 
-    daily = execute_daily_report_request("请生成贵州茅台日报")
-    weekly = execute_weekly_report_request("请生成本周周报")
+    daily = execute_daily_report_request("Please generate Apple's daily report")
+    weekly = execute_weekly_report_request("Please generate this week's weekly report")
     assert daily.intent == "DAILY_REPORT"
     assert weekly.intent == "WEEKLY_REPORT"
     assert "D:/tmp/daily.md" in daily.reply_markdown

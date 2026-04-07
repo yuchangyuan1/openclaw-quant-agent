@@ -13,7 +13,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--holding", action="append", dest="holdings", default=[])
     parser.add_argument("--stock-code", action="append", dest="stock_codes", default=[])
-    parser.add_argument("--benchmark", default="000300")
+    parser.add_argument("--benchmark", default="SPY")
     parser.add_argument("--lookback-days", type=int, default=90)
     parser.add_argument("--mode", choices=["check", "drawdown"], default="check")
     return parser.parse_args()

@@ -12,18 +12,17 @@ def build_query_variants(question: str, stock_codes: list[str] | None = None) ->
     variants = [base]
     stocks = load_target_stocks()
 
-    codes = [code for code in (stock_codes or []) if code in stocks]
+    codes = [code.upper() for code in (stock_codes or []) if code.upper() in stocks]
     for code in codes[:2]:
         name = stocks[code]["name"]
-        variants.append(f"{name} 最新动态")
-        variants.append(f"{code} 公告 新闻")
+        variants.append(f"{name} latest SEC filing")
+        variants.append(f"{code} 10-K 10-Q 8-K")
 
-    if "公告" not in base:
-        variants.append(f"{base} 公告")
-    if "新闻" not in base and "最新" not in base:
-        variants.append(f"{base} 最新进展")
-    if "业绩" in base or "财报" in base:
-        variants.append(f"{base} 营收 净利润")
+    lowered = base.lower()
+    if "filing" not in lowered and "sec" not in lowered and "edgar" not in lowered:
+        variants.append(f"{base} latest filing")
+    if "earnings" in lowered or "quarter" in lowered:
+        variants.append(f"{base} revenue margin guidance")
 
     deduped: list[str] = []
     for item in variants:
@@ -98,9 +97,9 @@ def build_evidence_pack(
     )
     coverage_warning = None
     if not evidence_pack:
-        coverage_warning = "未找到相关文档"
+        coverage_warning = "No relevant public documents were found."
     elif latest_evidence_date and latest_evidence_date < start:
-        coverage_warning = f"证据覆盖不足：未找到 {start} 之后的相关文档"
+        coverage_warning = f"Coverage is stale. No matching documents were found after {start}."
 
     return {
         "query": question,
@@ -154,13 +153,14 @@ def _dedupe_relation_items(items: list[dict]) -> list[dict]:
 
 def synthesize_answer(question: str, evidence_pack: list[dict]) -> str:
     if not evidence_pack:
-        return f"根据现有证据，暂未检索到与“{question}”直接相关的公开资料。"
+        return (
+            f"No directly relevant public evidence was retrieved for '{question}'. "
+            "Try narrowing the time range or specifying a ticker."
+        )
 
     lines = []
     for item in evidence_pack[:3]:
         citation = f"[{item['evidence_id']}]"
-        snippet = (item.get("snippet") or "").strip()
-        if not snippet:
-            snippet = item["title"]
+        snippet = (item.get("snippet") or "").strip() or item["title"]
         lines.append(f"{citation} {snippet}")
-    return "根据现有证据，相关信息主要包括：" + "；".join(lines) + "。"
+    return "Based on the current evidence set, the key findings are: " + "; ".join(lines) + "."

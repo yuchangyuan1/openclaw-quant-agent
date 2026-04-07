@@ -11,8 +11,8 @@ from services.common.paths import resolve_project_path
 from services.common.stocks import load_target_stocks
 
 from . import config
-from .akshare_fetcher import fetch_daily_hist, save_to_parquet
 from .fundamentals import build_industry_comparison, load_fundamental_snapshot
+from .market_fetcher import fetch_daily_hist, save_to_parquet
 
 TRADING_DAYS_PER_YEAR = 252
 
@@ -71,15 +71,16 @@ def load_price_history(
     end_date: str | None = None,
     refresh_if_missing: bool = False,
 ) -> pd.DataFrame:
-    path = _resolve_market_file(code)
+    ticker = code.upper()
+    path = _resolve_market_file(ticker)
     if path is None and refresh_if_missing:
         df = fetch_daily_hist(
-            code=code,
-            start=(start_date or "20240101").replace("-", ""),
+            code=ticker,
+            start=(start_date or "2024-01-01").replace("-", ""),
             end=(end_date or pd.Timestamp.today().strftime("%Y%m%d")).replace("-", ""),
         )
         if not df.empty:
-            path = save_to_parquet(df, code, str(market_data_dir()))
+            path = save_to_parquet(df, ticker, str(market_data_dir()))
 
     if path is None or not path.exists():
         return pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
@@ -97,31 +98,36 @@ def normalize_history(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
 
-    column_map = {
-        "日期": "date",
-        "trade_date": "date",
-        "开盘": "open",
-        "收盘": "close",
-        "最高": "high",
-        "最低": "low",
-        "成交量": "volume",
-        "成交额": "amount",
-        "amount": "amount",
-    }
-    normalized = df.rename(columns=column_map).copy()
+    normalized = df.rename(
+        columns={
+            "Date": "date",
+            "date": "date",
+            "trade_date": "date",
+            "Open": "open",
+            "open": "open",
+            "Close": "close",
+            "close": "close",
+            "High": "high",
+            "high": "high",
+            "Low": "low",
+            "low": "low",
+            "Volume": "volume",
+            "volume": "volume",
+        }
+    ).copy()
     if "date" not in normalized.columns:
         raise ValueError("missing date column in market data")
+
     normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
     normalized = normalized.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
 
-    for column in ["open", "close", "high", "low", "volume", "amount"]:
+    for column in ["open", "close", "high", "low", "volume"]:
         if column in normalized.columns:
             normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
 
     if "volume" not in normalized.columns:
-        normalized["volume"] = normalized["amount"] if "amount" in normalized.columns else 0.0
-
-    for column in ["open", "close", "high", "low"]:
+        normalized["volume"] = 0.0
+    for column in ["open", "high", "low"]:
         if column not in normalized.columns:
             normalized[column] = normalized["close"] if "close" in normalized.columns else 0.0
 
@@ -129,7 +135,8 @@ def normalize_history(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_snapshot(code: str, *, trade_date: str | None = None) -> MarketSnapshot | None:
-    history = load_price_history(code, end_date=trade_date)
+    ticker = code.upper()
+    history = load_price_history(ticker, end_date=trade_date)
     if len(history) < 2:
         return None
 
@@ -150,14 +157,14 @@ def build_snapshot(code: str, *, trade_date: str | None = None) -> MarketSnapsho
     else:
         ma_signal = "neutral"
 
-    stock_item = load_target_stocks().get(code, {})
-    fundamentals = load_fundamental_snapshot(code, fetch_if_missing=True)
+    stock_item = load_target_stocks().get(ticker, {})
+    fundamentals = load_fundamental_snapshot(ticker, fetch_if_missing=True)
     industry = (
         fundamentals.industry
         if fundamentals and fundamentals.industry
         else str(stock_item.get("industry")) if stock_item.get("industry") else None
     )
-    industry_comparison = build_industry_comparison(code, fundamentals) if fundamentals else None
+    industry_comparison = build_industry_comparison(ticker, fundamentals) if fundamentals else None
 
     technical_score = _score_technical(ma_signal, momentum_5d, momentum_20d, volatility_20d)
     fundamental_score = _score_fundamental(fundamentals)
@@ -165,8 +172,8 @@ def build_snapshot(code: str, *, trade_date: str | None = None) -> MarketSnapsho
     composite_score = _combine_scores(technical_score, fundamental_score, valuation_score)
 
     return MarketSnapshot(
-        code=code,
-        name=str(stock_item.get("name") or (fundamentals.name if fundamentals else f"Stock {code}")),
+        code=ticker,
+        name=str(stock_item.get("name") or (fundamentals.name if fundamentals else ticker)),
         industry=industry,
         data_date=latest["date"].date().isoformat(),
         close=round(float(latest["close"]), 2),
@@ -228,13 +235,14 @@ def build_snapshot(code: str, *, trade_date: str | None = None) -> MarketSnapsho
 
 
 def compute_factor_payload(code: str, factors: list[str], *, trade_date: str | None = None) -> dict:
-    snapshot = build_snapshot(code, trade_date=trade_date)
-    stock_item = load_target_stocks().get(code, {})
-    history = load_price_history(code, end_date=trade_date)
+    ticker = code.upper()
+    snapshot = build_snapshot(ticker, trade_date=trade_date)
+    stock_item = load_target_stocks().get(ticker, {})
+    history = load_price_history(ticker, end_date=trade_date)
 
     payload = {
-        "code": code,
-        "name": snapshot.name if snapshot else str(stock_item.get("name") or f"Stock {code}"),
+        "code": ticker,
+        "name": snapshot.name if snapshot else str(stock_item.get("name") or ticker),
         "industry": snapshot.industry if snapshot else stock_item.get("industry"),
         "data_date": snapshot.data_date if snapshot else trade_date,
         "report_period": snapshot.report_period if snapshot else None,
@@ -272,19 +280,19 @@ def compute_factor_payload(code: str, factors: list[str], *, trade_date: str | N
         value = factor_map.get(factor)
         payload[factor] = round(value, 4) if isinstance(value, float) else value
 
-    payload["data_source"] = "market_parquet_plus_fundamental_cache"
+    payload["data_source"] = "yfinance_market_cache_plus_fundamental_cache"
     return payload
 
 
 def portfolio_returns(weights: dict[str, float], *, lookback_days: int, end_date: str | None = None) -> pd.Series:
     frames = []
     for code, weight in weights.items():
-        history = load_price_history(code, end_date=end_date)
+        history = load_price_history(code.upper(), end_date=end_date)
         if history.empty:
             continue
         returns = history[["date", "close"]].copy()
-        returns[code] = returns["close"].pct_change() * weight
-        frames.append(returns[["date", code]])
+        returns[code.upper()] = returns["close"].pct_change() * weight
+        frames.append(returns[["date", code.upper()]])
 
     if not frames:
         return pd.Series(dtype=float)
@@ -306,7 +314,7 @@ def benchmark_returns(
     end_date: str | None = None,
     fallback_codes: list[str] | None = None,
 ) -> pd.Series:
-    benchmark_code = benchmark.replace(".SH", "").replace(".SZ", "")
+    benchmark_code = benchmark.upper().replace(".SH", "").replace(".SZ", "")
     history = load_price_history(benchmark_code, end_date=end_date)
     if len(history) >= 2:
         series = history["close"].pct_change().dropna().tail(lookback_days)
@@ -318,38 +326,40 @@ def benchmark_returns(
 
 
 def compute_drawdown_metrics(code: str, *, lookback_days: int) -> dict:
-    history = load_price_history(code)
+    ticker = code.upper()
+    history = load_price_history(ticker)
     if history.empty:
-        return {"code": code, "max_drawdown": None, "current_drawdown": None, "recovery_days": None}
+        return {
+            "code": ticker,
+            "max_drawdown": None,
+            "peak_date": None,
+            "trough_date": None,
+            "recovery_status": "NO_DATA",
+            "latest_close": None,
+        }
 
-    window = history.tail(max(lookback_days + 1, 2)).copy()
-    rolling_peak = window["close"].cummax()
-    drawdowns = window["close"] / rolling_peak - 1
-    max_drawdown = float(drawdowns.min())
-    current_drawdown = float(drawdowns.iloc[-1])
-
-    if current_drawdown == 0:
-        recovery_days = 0
-    else:
-        trough_index = drawdowns.idxmin()
-        trough_close = float(window.loc[trough_index, "close"])
-        prior_peak = float(rolling_peak.loc[trough_index])
-        after_trough = window.loc[trough_index + 1 :].copy()
-        recovered = after_trough.loc[after_trough["close"] >= prior_peak]
-        recovery_days = int(len(recovered)) if not recovered.empty and trough_close < prior_peak else None
+    recent = history.tail(max(lookback_days, 2)).copy()
+    cumulative = recent["close"] / recent["close"].iloc[0]
+    rolling_peak = cumulative.cummax()
+    drawdown = cumulative / rolling_peak - 1
+    trough_index = drawdown.idxmin()
+    peak_index = cumulative.loc[:trough_index].idxmax()
+    latest_close = float(recent["close"].iloc[-1])
 
     return {
-        "code": code,
-        "max_drawdown": round(max_drawdown, 4),
-        "current_drawdown": round(current_drawdown, 4),
-        "recovery_days": recovery_days,
+        "code": ticker,
+        "max_drawdown": round(float(drawdown.min()), 4),
+        "peak_date": recent.loc[peak_index, "date"].date().isoformat(),
+        "trough_date": recent.loc[trough_index, "date"].date().isoformat(),
+        "recovery_status": "RECOVERED" if latest_close >= float(recent.loc[peak_index, "close"]) else "UNDERWATER",
+        "latest_close": round(latest_close, 2),
     }
 
 
 def _resolve_market_file(code: str) -> Path | None:
     root = market_data_dir()
-    for suffix in ["_daily.parquet", "_1y.parquet"]:
-        path = root / f"{code}{suffix}"
+    candidates = [root / f"{code.upper()}_daily.parquet", root / f"{code.upper()}_1y.parquet"]
+    for path in candidates:
         if path.exists():
             return path
     return None
@@ -361,24 +371,33 @@ def _rolling_value(series: pd.Series, window: int) -> float | None:
     return float(series.tail(window).mean())
 
 
-def _window_return(series: pd.Series, days: int) -> float | None:
-    if len(series) <= days:
+def _window_return(series: pd.Series, window: int) -> float | None:
+    if len(series) < window + 1:
         return None
-    return (float(series.iloc[-1]) / float(series.iloc[-days - 1]) - 1) * 100
+    start_value = float(series.iloc[-window - 1])
+    end_value = float(series.iloc[-1])
+    if start_value == 0:
+        return None
+    return (end_value / start_value - 1) * 100
 
 
-def _annualized_volatility(returns: pd.Series, min_periods: int) -> float | None:
-    if len(returns) < min_periods:
+def _annualized_volatility(returns: pd.Series, window: int) -> float | None:
+    if len(returns) < window:
         return None
-    return float(returns.tail(min_periods).std(ddof=0) * sqrt(TRADING_DAYS_PER_YEAR))
+    sample = returns.tail(window)
+    return float(sample.std(ddof=0) * sqrt(TRADING_DAYS_PER_YEAR))
 
 
 def _price_rank(series: pd.Series) -> float:
-    if series.empty:
+    values = series.dropna()
+    if values.empty:
         return 0.0
-    latest = float(series.iloc[-1])
-    lower = float((series <= latest).sum())
-    return lower / float(len(series))
+    latest = float(values.iloc[-1])
+    min_value = float(values.min())
+    max_value = float(values.max())
+    if max_value == min_value:
+        return 1.0
+    return (latest - min_value) / (max_value - min_value)
 
 
 def _score_technical(
@@ -386,139 +405,95 @@ def _score_technical(
     momentum_5d: float | None,
     momentum_20d: float | None,
     volatility_20d: float | None,
-) -> float:
-    score = 0.0
+) -> float | None:
+    score = 50.0
     if ma_signal == "bullish":
-        score += 30
-    elif ma_signal == "neutral":
-        score += 18
+        score += 15
     elif ma_signal == "bearish":
-        score += 8
-
-    score += _scaled_score(momentum_5d, good=6, neutral=0, cap=20) or 0.0
-    score += _scaled_score(momentum_20d, good=15, neutral=0, cap=30) or 0.0
-
+        score -= 15
+    if momentum_5d is not None:
+        score += max(min(momentum_5d, 10), -10)
+    if momentum_20d is not None:
+        score += max(min(momentum_20d / 2, 10), -10)
     if volatility_20d is not None:
-        if volatility_20d <= 0.2:
-            score += 20
-        elif volatility_20d <= 0.35:
-            score += 15
-        elif volatility_20d <= 0.5:
-            score += 8
-        else:
-            score += 2
-    return round(min(score, 100.0), 2)
+        score -= min(volatility_20d * 100, 15)
+    return round(max(min(score, 100), 0), 2)
 
 
 def _score_fundamental(snapshot) -> float | None:
     if snapshot is None:
         return None
-
-    metric_scores = [
-        _scaled_score(snapshot.roe, good=20, neutral=10, cap=22),
-        _scaled_score(snapshot.gross_margin, good=40, neutral=25, cap=16),
-        _scaled_score(snapshot.net_margin, good=15, neutral=8, cap=14),
-        _scaled_score(snapshot.revenue_growth, good=15, neutral=5, cap=18),
-        _scaled_score(snapshot.net_profit_growth, good=15, neutral=5, cap=18),
-        _reverse_scaled_score(snapshot.debt_to_asset, good=35, neutral=50, cap=12),
-    ]
-    current_ratio_score = _scaled_score(snapshot.current_ratio, good=1.8, neutral=1.2, cap=10)
-    quick_ratio_score = _scaled_score(snapshot.quick_ratio, good=1.2, neutral=0.8, cap=10)
-    if current_ratio_score is not None or quick_ratio_score is not None:
-        metric_scores.append(max(current_ratio_score or 0.0, quick_ratio_score or 0.0))
-    valid_scores = [item for item in metric_scores if item is not None]
-    return round(sum(valid_scores), 2) if valid_scores else None
+    score = 50.0
+    for value, weight in [
+        (snapshot.roe, 0.4),
+        (snapshot.gross_margin, 0.15),
+        (snapshot.net_margin, 0.15),
+        (snapshot.revenue_growth, 0.15),
+        (snapshot.net_profit_growth, 0.15),
+    ]:
+        if value is not None:
+            score += max(min(value, 30), -10) * weight
+    if snapshot.debt_to_asset is not None:
+        score -= min(snapshot.debt_to_asset / 4, 15)
+    return round(max(min(score, 100), 0), 2)
 
 
-def _score_valuation(snapshot, comparison: dict[str, Any] | None) -> float | None:
+def _score_valuation(snapshot, industry_comparison: dict[str, Any] | None) -> float | None:
     if snapshot is None:
         return None
-
-    metrics = comparison.get("metrics", {}) if comparison else {}
-    pe_percentile = metrics.get("pe_ttm", {}).get("percentile")
-    pb_percentile = metrics.get("pb", {}).get("percentile")
-
-    scores: list[float] = []
-    if pe_percentile is not None:
-        scores.append(round((1 - float(pe_percentile)) * 60, 2))
-    elif snapshot.pe_ttm is not None:
-        fallback_score = _reverse_scaled_score(snapshot.pe_ttm, good=18, neutral=28, cap=60)
-        if fallback_score is not None:
-            scores.append(fallback_score)
-
-    if pb_percentile is not None:
-        scores.append(round((1 - float(pb_percentile)) * 40, 2))
-    elif snapshot.pb is not None:
-        fallback_score = _reverse_scaled_score(snapshot.pb, good=2, neutral=4, cap=40)
-        if fallback_score is not None:
-            scores.append(fallback_score)
-
-    return round(sum(scores), 2) if scores else None
+    score = 50.0
+    metrics = (industry_comparison or {}).get("metrics", {})
+    for metric_name in ["pe_ttm", "pb"]:
+        metric = metrics.get(metric_name)
+        if metric:
+            percentile = metric.get("percentile")
+            if percentile is not None:
+                score += (0.5 - float(percentile)) * 30
+    if snapshot.pe_ttm is not None and snapshot.pe_ttm < 20:
+        score += 5
+    if snapshot.pb is not None and snapshot.pb < 5:
+        score += 5
+    return round(max(min(score, 100), 0), 2)
 
 
-def _combine_scores(
-    technical_score: float | None,
-    fundamental_score: float | None,
-    valuation_score: float | None,
-) -> float | None:
-    weighted = []
-    if technical_score is not None:
-        weighted.append((technical_score, 0.35))
-    if fundamental_score is not None:
-        weighted.append((fundamental_score, 0.4))
-    if valuation_score is not None:
-        weighted.append((valuation_score, 0.25))
-    if not weighted:
+def _combine_scores(*scores: float | None) -> float | None:
+    values = [score for score in scores if score is not None]
+    if not values:
         return None
-    total_weight = sum(weight for _score, weight in weighted)
-    return round(sum(score * weight for score, weight in weighted) / total_weight, 2)
+    return round(sum(values) / len(values), 2)
 
 
-def _technical_view(ma_signal: str | None, momentum_20d: float | None, volatility_20d: float | None) -> str:
-    if ma_signal == "bullish" and (momentum_20d or 0) > 0 and (volatility_20d or 0.0) <= 0.35:
-        return "Trend remains constructive with supportive technical momentum"
+def _technical_view(ma_signal: str | None, momentum_20d: float | None, volatility_20d: float | None) -> str | None:
+    if ma_signal == "bullish" and (momentum_20d or 0) > 0:
+        return "Positive trend"
     if ma_signal == "bearish" and (momentum_20d or 0) < 0:
-        return "Trend is weak and technical confirmation is still missing"
-    return "Technical setup is balanced and waiting for clearer confirmation"
+        return "Weak trend"
+    if volatility_20d and volatility_20d > 0.4:
+        return "High volatility"
+    return "Mixed"
 
 
-def _fundamental_view(snapshot) -> str:
+def _fundamental_view(snapshot) -> str | None:
     if snapshot is None:
-        return "Fundamental data is unavailable, so the quality view is incomplete"
-    positive_flags = sum(
-        1
-        for condition in [
-            (snapshot.roe or 0) >= 15,
-            (snapshot.gross_margin or 0) >= 30,
-            (snapshot.revenue_growth or 0) >= 10,
-            (snapshot.net_profit_growth or 0) >= 10,
-            (snapshot.debt_to_asset or 100) <= 50,
-        ]
-        if condition
-    )
-    if positive_flags >= 4:
-        return "Profitability and growth quality are strong"
-    if positive_flags >= 2:
-        return "Fundamentals are stable, but growth and leverage are mixed"
-    return "Fundamentals are weaker and need further validation from future reports"
+        return None
+    if snapshot.roe and snapshot.roe >= 20 and snapshot.revenue_growth and snapshot.revenue_growth > 10:
+        return "Strong fundamentals"
+    if snapshot.net_margin and snapshot.net_margin < 5:
+        return "Margin pressure"
+    return "Balanced fundamentals"
 
 
-def _valuation_view(snapshot, comparison: dict[str, Any] | None) -> str:
+def _valuation_view(snapshot, industry_comparison: dict[str, Any] | None) -> str | None:
     if snapshot is None:
-        return "Valuation data is unavailable"
-    metrics = comparison.get("metrics", {}) if comparison else {}
+        return None
+    metrics = (industry_comparison or {}).get("metrics", {})
     pe_metric = metrics.get("pe_ttm")
-    pb_metric = metrics.get("pb")
-    if pe_metric and pb_metric:
-        if pe_metric["relative"] == "better_than_industry" and pb_metric["relative"] == "better_than_industry":
-            return "Valuation sits below industry averages and offers relative cushion"
-        if pe_metric["relative"] == "worse_than_industry" and pb_metric["relative"] == "worse_than_industry":
-            return "Valuation is richer than industry peers and needs stronger execution"
-    if snapshot.pe_ttm is not None and snapshot.pe_ttm <= 20:
-        return "Absolute valuation looks broadly reasonable"
-    if snapshot.pe_ttm is not None and snapshot.pe_ttm >= 35:
-        return "Absolute valuation is elevated and needs continued earnings delivery"
-    return "Valuation is close to neutral and should be read with industry percentiles"
+    if pe_metric and pe_metric.get("percentile") is not None:
+        if float(pe_metric["percentile"]) <= 0.35:
+            return "Relatively attractive"
+        if float(pe_metric["percentile"]) >= 0.7:
+            return "Relatively expensive"
+    return "Fairly valued"
 
 
 def _composite_signal(score: float | None) -> str | None:
@@ -533,31 +508,10 @@ def _composite_signal(score: float | None) -> str | None:
     return "CAUTION"
 
 
-def _scaled_score(value: float | None, *, good: float, neutral: float, cap: float) -> float | None:
-    if value is None:
-        return None
-    if value >= good:
-        return cap
-    if value <= neutral:
-        return cap * 0.3
-    ratio = (value - neutral) / (good - neutral)
-    return round(cap * (0.3 + 0.7 * ratio), 2)
-
-
-def _reverse_scaled_score(value: float | None, *, good: float, neutral: float, cap: float) -> float | None:
-    if value is None:
-        return None
-    if value <= good:
-        return cap
-    if value >= neutral:
-        return cap * 0.3
-    ratio = (neutral - value) / (neutral - good)
-    return round(cap * (0.3 + 0.7 * ratio), 2)
-
-
 def _industry_metric_percentile(snapshot: MarketSnapshot | None, metric_name: str) -> float | None:
     if snapshot is None or not snapshot.industry_comparison:
         return None
-    metric_payload = snapshot.industry_comparison.get("metrics", {}).get(metric_name, {})
-    percentile = metric_payload.get("percentile")
-    return round(float(percentile), 4) if percentile is not None else None
+    metric = snapshot.industry_comparison.get("metrics", {}).get(metric_name)
+    if not metric:
+        return None
+    return metric.get("percentile")

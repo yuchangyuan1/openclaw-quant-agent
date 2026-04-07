@@ -6,21 +6,14 @@ from services.ingestion.state import IngestionTaskRepository
 
 
 def test_resolve_sources_includes_new_source_groups():
-    assert service._resolve_sources("all_news") == ["eastmoney_news", "10jqka", "sina"]
-    assert service._resolve_sources("all_announcements") == ["announcement", "sse", "szse"]
-    assert service._resolve_sources("all") == [
-        "eastmoney_news",
-        "10jqka",
-        "sina",
-        "announcement",
-        "sse",
-        "szse",
-    ]
+    assert service._resolve_sources("all_news") == ["sec_edgar"]
+    assert service._resolve_sources("filings") == ["sec_edgar"]
+    assert service._resolve_sources("all") == ["sec_edgar"]
 
 
 def test_target_pool_sync_endpoint_queues_incremental_job():
     client = TestClient(ingestion_app)
-    response = client.post("/api/v1/ingest/target-pool/sync", json={"source": "all_news"})
+    response = client.post("/api/v1/ingest/target-pool/sync", json={"source": "all"})
     payload = response.json()
 
     assert response.status_code == 200
@@ -42,14 +35,14 @@ def test_run_job_records_incremental_task_state(tmp_path, monkeypatch):
         captured.append((source, tuple(stock_codes), date_from, date_to, per_stock_limit))
         return [
             {
-                "source": source if source != "eastmoney_news" else "eastmoney",
-                "doc_type": "announcement" if source in {"announcement", "sse", "szse"} else "news",
+                "source": source,
+                "doc_type": "filing",
                 "title": f"{source} sample",
                 "url": f"https://example.com/{source}",
                 "published_at": date_to or "2026-04-06",
-                "company_code": "600519",
-                "content": "sample content",
-                "metadata": {"matched_stocks": [{"code": "600519", "name": "贵州茅台"}]},
+                "company_code": "AAPL",
+                "content": "sample filing summary",
+                "metadata": {"matched_stocks": [{"code": "AAPL", "name": "Apple Inc."}]},
             }
         ]
 
@@ -57,9 +50,9 @@ def test_run_job_records_incremental_task_state(tmp_path, monkeypatch):
 
     service._run_job(
         job_id="job-test-1",
-        source="all_announcements",
+        source="all",
         date_str="2026-04-06",
-        stock_codes=["600519"],
+        stock_codes=["AAPL"],
         target_pool=False,
         incremental=True,
         lookback_days=2,
@@ -71,7 +64,7 @@ def test_run_job_records_incremental_task_state(tmp_path, monkeypatch):
     assert len(tasks) == 1
     task = tasks[0]
     assert task["task_name"] == "target_pool_incremental_sync"
-    assert set(task["sources"].keys()) == {"announcement", "sse", "szse"}
-    assert task["sources"]["announcement"]["docs_collected"] == 1
-    assert all(item[1] == ("600519",) for item in captured)
+    assert set(task["sources"].keys()) == {"sec_edgar"}
+    assert task["sources"]["sec_edgar"]["docs_collected"] == 1
+    assert all(item[1] == ("AAPL",) for item in captured)
     assert all(item[4] == 2 for item in captured)

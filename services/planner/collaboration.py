@@ -65,7 +65,7 @@ def run_quant_agent(
 def run_risk_agent(
     *,
     portfolio: list[dict[str, Any]],
-    benchmark: str = "000300",
+    benchmark: str = "SPY",
     lookback_days: int = 90,
     run_scenarios: bool = True,
 ) -> AgentCollaborationResult:

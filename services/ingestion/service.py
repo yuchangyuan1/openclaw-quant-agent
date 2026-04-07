@@ -14,16 +14,11 @@ from . import providers
 from .state import IngestionTaskRepository
 
 _SOURCE_GROUPS = {
-    "all": ["eastmoney_news", "10jqka", "sina", "announcement", "sse", "szse"],
-    "all_news": ["eastmoney_news", "10jqka", "sina"],
-    "all_announcements": ["announcement", "sse", "szse"],
-    "eastmoney": ["eastmoney_news", "announcement"],
-    "eastmoney_news": ["eastmoney_news"],
-    "10jqka": ["10jqka"],
-    "sina": ["sina"],
-    "announcement": ["announcement"],
-    "sse": ["sse"],
-    "szse": ["szse"],
+    "all": ["sec_edgar"],
+    "all_news": ["sec_edgar"],
+    "all_filings": ["sec_edgar"],
+    "filings": ["sec_edgar"],
+    "sec_edgar": ["sec_edgar"],
 }
 
 _JOBS: dict[str, dict] = {}

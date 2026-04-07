@@ -3,162 +3,252 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from .paths import PROJECT_ROOT
-
-TARGET_STOCKS_PATH = PROJECT_ROOT / "docs" / "target-stocks.md"
-_TABLE_ROW_RE = re.compile(r"^\|\s*(\d{6})\.(?:SH|SZ)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|")
-_THEME_HEADER_RE = re.compile(r"^###\s+主题\s*\d+[:：]\s*(.+?)\s*$")
-_REPRESENTATIVE_RE = re.compile(r"代表标的[:：]\s*(.+)")
-_CODE_WITH_NAME_RE = re.compile(r"(\d{6})[（(]([^）)]+)[）)]")
+_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
+_TICKER_RE = re.compile(r"\b[A-Z]{1,5}\b")
+_TITLE_CASE_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b")
 _CORPORATE_SUFFIXES = (
-    "集团股份有限公司",
-    "控股股份有限公司",
-    "股份有限公司",
-    "有限责任公司",
-    "控股有限公司",
-    "股份公司",
-    "有限公司",
-    "集团",
+    "incorporated",
+    "corporation",
+    "company",
+    "holdings",
+    "inc",
+    "corp",
+    "ltd",
+    "llc",
+    "plc",
+    "classa",
+    "classc",
 )
-_COMPANY_TERM_RE = re.compile(
-    r"([\u4e00-\u9fff]{2,20}(?:集团股份有限公司|控股股份有限公司|股份有限公司|有限责任公司|控股有限公司|股份公司|有限公司|集团|银行|证券|科技|信息|化工|药业|制药|电子|能源|电力|汽车|旅游|材料|医药|味业|乳业|国际|重工|智家))"
-)
-_PUNCTUATION_RE = re.compile(r"[\s\u3000()（）【】\[\]《》<>“”\"'':：,，。；;、\-—_]")
 
+_TARGET_STOCKS = [
+    {
+        "code": "AAPL",
+        "name": "Apple",
+        "industry": "Consumer Electronics",
+        "sector": "Technology",
+        "cik": "0000320193",
+        "aliases": ["Apple", "Apple Inc", "AAPL", "iPhone maker"],
+    },
+    {
+        "code": "MSFT",
+        "name": "Microsoft",
+        "industry": "Software & Cloud",
+        "sector": "Technology",
+        "cik": "0000789019",
+        "aliases": ["Microsoft", "Microsoft Corp", "MSFT", "Azure"],
+    },
+    {
+        "code": "GOOGL",
+        "name": "Alphabet",
+        "industry": "Internet Platforms",
+        "sector": "Communication Services",
+        "cik": "0001652044",
+        "aliases": ["Alphabet", "Google", "GOOGL", "Google parent"],
+    },
+    {
+        "code": "AMZN",
+        "name": "Amazon",
+        "industry": "E-Commerce & Cloud",
+        "sector": "Consumer Discretionary",
+        "cik": "0001018724",
+        "aliases": ["Amazon", "Amazon.com", "AMZN", "AWS"],
+    },
+    {
+        "code": "META",
+        "name": "Meta Platforms",
+        "industry": "Digital Advertising",
+        "sector": "Communication Services",
+        "cik": "0001326801",
+        "aliases": ["Meta", "Meta Platforms", "Facebook", "META"],
+    },
+    {
+        "code": "NVDA",
+        "name": "NVIDIA",
+        "industry": "Semiconductors & AI Hardware",
+        "sector": "Technology",
+        "cik": "0001045810",
+        "aliases": ["NVIDIA", "Nvidia", "NVDA", "GPU leader"],
+    },
+    {
+        "code": "TSLA",
+        "name": "Tesla",
+        "industry": "EVs & Clean Energy",
+        "sector": "Consumer Discretionary",
+        "cik": "0001318605",
+        "aliases": ["Tesla", "TSLA", "Tesla Inc"],
+    },
+]
 
-@lru_cache(maxsize=1)
-def load_target_stocks() -> dict[str, dict[str, object]]:
-    mapping: dict[str, dict[str, object]] = {}
-    if not TARGET_STOCKS_PATH.exists():
-        return mapping
-
-    for line in TARGET_STOCKS_PATH.read_text(encoding="utf-8").splitlines():
-        match = _TABLE_ROW_RE.match(line.strip())
-        if not match:
-            continue
-        code, name, industry = match.groups()
-        mapping[code] = {
-            "code": code,
-            "name": name.strip(),
-            "industry": industry.strip(),
-            "aliases": build_company_aliases(name.strip()),
-        }
-    return mapping
-
-
-def build_company_aliases(name: str) -> list[str]:
-    aliases = []
-    for candidate in [name, normalize_company_term(name)]:
-        normalized = candidate.strip()
-        if normalized and normalized not in aliases:
-            aliases.append(normalized)
-    return aliases
+_THEMES = [
+    {
+        "theme": "AI Infrastructure",
+        "codes": ["NVDA", "MSFT", "GOOGL", "META"],
+        "names": ["NVIDIA", "Microsoft", "Alphabet", "Meta Platforms"],
+    },
+    {
+        "theme": "Consumer Platforms",
+        "codes": ["AAPL", "AMZN", "GOOGL", "META"],
+        "names": ["Apple", "Amazon", "Alphabet", "Meta Platforms"],
+    },
+    {
+        "theme": "Cloud and Enterprise Software",
+        "codes": ["MSFT", "AMZN", "GOOGL"],
+        "names": ["Microsoft", "Amazon", "Alphabet"],
+    },
+    {
+        "theme": "EV and Industrial AI",
+        "codes": ["TSLA", "NVDA"],
+        "names": ["Tesla", "NVIDIA"],
+    },
+]
 
 
 def normalize_company_term(term: str) -> str:
-    value = _PUNCTUATION_RE.sub("", term or "")
+    value = _NORMALIZE_RE.sub("", (term or "").lower())
     changed = True
     while changed and value:
         changed = False
         for suffix in _CORPORATE_SUFFIXES:
-            if value.endswith(suffix) and len(value) > len(suffix) + 1:
+            if value.endswith(suffix) and len(value) > len(suffix) + 2:
                 value = value[: -len(suffix)]
                 changed = True
                 break
     return value
 
 
+def build_company_aliases(name: str, code: str | None = None, extra_aliases: list[str] | None = None) -> list[str]:
+    aliases: list[str] = []
+    for candidate in [name, normalize_company_term(name), code, *(extra_aliases or [])]:
+        if not isinstance(candidate, str):
+            continue
+        normalized = candidate.strip()
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+    return aliases
+
+
+@lru_cache(maxsize=1)
+def load_target_stocks() -> dict[str, dict[str, object]]:
+    mapping: dict[str, dict[str, object]] = {}
+    for item in _TARGET_STOCKS:
+        code = str(item["code"]).upper()
+        mapping[code] = {
+            "code": code,
+            "name": item["name"],
+            "industry": item["industry"],
+            "sector": item["sector"],
+            "cik": item["cik"],
+            "aliases": build_company_aliases(item["name"], code, item.get("aliases", [])),
+        }
+    return mapping
+
+
+@lru_cache(maxsize=1)
+def load_theme_pool() -> list[dict[str, object]]:
+    return [dict(item) for item in _THEMES]
+
+
 def extract_company_terms(text: str) -> list[str]:
-    haystack = text or ""
+    if not text:
+        return []
+
+    haystack = text
+    lowered = haystack.lower()
     matched: list[str] = []
+    stocks = load_target_stocks()
 
-    for item in load_target_stocks().values():
+    for ticker in _TICKER_RE.findall(haystack.upper()):
+        if ticker in stocks and str(stocks[ticker]["name"]) not in matched:
+            matched.append(str(stocks[ticker]["name"]))
+
+    for item in stocks.values():
         aliases = item.get("aliases", [])
-        if item["code"] in haystack or any(alias and alias in haystack for alias in aliases):
-            for alias in aliases:
-                if alias not in matched:
-                    matched.append(alias)
+        for alias in aliases:
+            alias_lower = alias.lower()
+            if alias.isupper():
+                if re.search(rf"\b{re.escape(alias)}\b", haystack.upper()) and str(item["name"]) not in matched:
+                    matched.append(str(item["name"]))
+                    break
+            elif alias_lower and alias_lower in lowered and str(item["name"]) not in matched:
+                matched.append(str(item["name"]))
+                break
 
-    for raw_term in _COMPANY_TERM_RE.findall(haystack):
-        for candidate in [raw_term, normalize_company_term(raw_term)]:
-            if candidate and candidate not in matched:
-                matched.append(candidate)
+    if matched:
+        return matched
+
+    title_case_matches = _TITLE_CASE_RE.findall(haystack)
+    if title_case_matches:
+        phrase = title_case_matches[0].strip()
+        if phrase:
+            matched.append(phrase)
+            shortened = phrase.split()[0]
+            if shortened and shortened not in matched:
+                matched.append(shortened)
     return matched
 
 
 def matches_company_terms(text: str, company_terms: list[str]) -> bool:
     if not company_terms:
         return True
-    raw_text = text or ""
-    normalized_text = normalize_company_term(raw_text)
+    lowered = (text or "").lower()
+    normalized_text = normalize_company_term(text or "")
     for term in company_terms:
-        normalized_term = normalize_company_term(term)
-        if term and term in raw_text:
+        term_lower = term.lower()
+        term_normalized = normalize_company_term(term)
+        if term_lower and term_lower in lowered:
             return True
-        if normalized_term and normalized_term in normalized_text:
+        if term_normalized and term_normalized in normalized_text:
             return True
     return False
 
 
 def match_company_code(text: str) -> str | None:
-    haystack = text or ""
+    if not text:
+        return None
+    haystack = text
+    lowered = haystack.lower()
     for code, item in load_target_stocks().items():
-        aliases = item.get("aliases", [])
-        if code in haystack or any(alias and alias in haystack for alias in aliases):
+        if re.search(rf"\b{re.escape(code)}\b", haystack.upper()):
             return code
+        for alias in item.get("aliases", []):
+            alias_lower = alias.lower()
+            if alias.isupper() and re.search(rf"\b{re.escape(alias)}\b", haystack.upper()):
+                return code
+            if alias_lower and alias_lower in lowered:
+                return code
     return None
 
 
-@lru_cache(maxsize=1)
-def load_theme_pool() -> list[dict[str, object]]:
-    themes: list[dict[str, object]] = []
-    if not TARGET_STOCKS_PATH.exists():
-        return themes
-
-    current: dict[str, object] | None = None
-    for raw_line in TARGET_STOCKS_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        header = _THEME_HEADER_RE.match(line)
-        if header:
-            current = {"theme": header.group(1).strip(), "codes": [], "names": []}
-            themes.append(current)
-            continue
-        if current is None:
-            continue
-        representative = _REPRESENTATIVE_RE.search(line)
-        if not representative:
-            continue
-        for code, name in _CODE_WITH_NAME_RE.findall(representative.group(1)):
-            current["codes"].append(code)
-            current["names"].append(name)
-    return themes
-
-
 def extract_stock_matches(text: str) -> list[dict[str, str]]:
-    haystack = text or ""
     matched: list[dict[str, str]] = []
+    lowered = (text or "").lower()
     for code, item in load_target_stocks().items():
         aliases = item.get("aliases", [])
-        if code in haystack or any(alias and alias in haystack for alias in aliases):
-            matched.append({"code": code, "name": item["name"]})
+        hit = re.search(rf"\b{re.escape(code)}\b", (text or "").upper()) is not None
+        if not hit:
+            hit = any(alias.lower() in lowered for alias in aliases if not alias.isupper())
+        if not hit:
+            hit = any(
+                re.search(rf"\b{re.escape(alias)}\b", (text or "").upper()) is not None
+                for alias in aliases
+                if alias.isupper()
+            )
+        if hit:
+            matched.append({"code": code, "name": str(item["name"])})
     return matched
 
 
 def extract_theme_matches(text: str) -> list[str]:
-    haystack = text or ""
+    haystack = (text or "").lower()
+    matched_codes = {item["code"] for item in extract_stock_matches(text)}
     matched: list[str] = []
     for theme in load_theme_pool():
-        theme_name = theme["theme"]
-        if theme_name in haystack:
+        theme_name = str(theme["theme"])
+        if theme_name.lower() in haystack:
             matched.append(theme_name)
             continue
-        names = theme.get("names", [])
-        codes = theme.get("codes", [])
-        hits = 0
-        for value in list(names) + list(codes):
-            if value in haystack:
-                hits += 1
-        if hits >= 2:
+        theme_hits = sum(1 for code in theme.get("codes", []) if code in matched_codes)
+        if theme_hits >= 2:
             matched.append(theme_name)
     return matched
 
@@ -166,14 +256,15 @@ def extract_theme_matches(text: str) -> list[str]:
 def build_research_metadata(text: str, explicit_code: str | None = None) -> dict[str, object]:
     stock_matches = extract_stock_matches(text)
     matched_codes = [item["code"] for item in stock_matches]
-    if explicit_code and explicit_code not in matched_codes:
-        stock_item = load_target_stocks().get(explicit_code)
+    explicit = explicit_code.upper() if explicit_code else None
+    if explicit and explicit not in matched_codes:
+        stock_item = load_target_stocks().get(explicit)
         if stock_item:
-            stock_matches.insert(0, {"code": explicit_code, "name": str(stock_item["name"])})
-            matched_codes.insert(0, explicit_code)
+            stock_matches.insert(0, {"code": explicit, "name": str(stock_item["name"])})
+            matched_codes.insert(0, explicit)
 
     return {
-        "primary_company_code": explicit_code or (matched_codes[0] if matched_codes else None),
+        "primary_company_code": explicit or (matched_codes[0] if matched_codes else None),
         "matched_stocks": stock_matches,
         "matched_themes": extract_theme_matches(text),
         "company_terms": extract_company_terms(text),

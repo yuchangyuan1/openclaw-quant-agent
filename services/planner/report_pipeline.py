@@ -6,7 +6,11 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from services.common.audit import RunLogRepository
-from services.common.ethics import classify_action_boundary, compute_data_freshness, compute_evidence_status
+from services.common.ethics import (
+    classify_action_boundary,
+    compute_data_freshness,
+    compute_evidence_status,
+)
 from services.common.paths import reports_dir
 from services.common.retry import call_with_retry
 from services.common.stocks import load_target_stocks
@@ -67,9 +71,9 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
         initial_results = run_parallel_collaboration(
             {
                 "knowledge": lambda: run_knowledge_agent(
-                    question="A股最新公告和新闻",
+                    question="Latest SEC filings and public updates for the Magnificent 7",
                     stock_codes=selected_codes,
-                    doc_types=["news", "announcement"],
+                    doc_types=["filing"],
                     days=7,
                     top_k=5,
                     min_score=0.1,
@@ -77,7 +81,7 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
                 "quant": lambda: run_quant_agent(stock_codes=selected_codes, report_date=resolved_date, indicators=[]),
                 "risk": lambda: run_risk_agent(
                     portfolio=[{"code": code, "weight": weight} for code, weight in weights.items()],
-                    benchmark="000300",
+                    benchmark="SPY",
                     lookback_days=90,
                     run_scenarios=True,
                 ),
@@ -192,7 +196,7 @@ def execute_weekly_report(report_date: str | None = None, stock_codes: list[str]
                 "quant": lambda: run_quant_agent(stock_codes=selected_codes, report_date=week_end.isoformat(), indicators=[]),
                 "risk": lambda: run_risk_agent(
                     portfolio=[{"code": code, "weight": weight} for code, weight in weights.items()],
-                    benchmark="000300",
+                    benchmark="SPY",
                     lookback_days=90,
                     run_scenarios=True,
                 ),
@@ -200,14 +204,17 @@ def execute_weekly_report(report_date: str | None = None, stock_codes: list[str]
         )
         quant_result = initial_results["quant"]
         risk_result = initial_results["risk"]
-        attempts["knowledge"] = 1
         attempts["quant"] = 1
         attempts["risk"] = 1
+
         quant_payload = dict(quant_result.payload)
         market_summary = dict(quant_payload.get("market_summary", {}))
-        market_summary["data_source"] = f"{len(archived_reports)}份日报归档 + 周末量化快照"
+        market_summary["data_source"] = (
+            f"{len(archived_reports)} archived daily reports + weekly yfinance market snapshot"
+        )
         quant_payload["market_summary"] = market_summary
         quant_payload["style_rotation"] = _build_weekly_style_rotation(quant_payload)
+
         report_result, attempts["report"] = _run_step(
             lambda: run_report_agent(
                 report_type="weekly",
@@ -340,7 +347,7 @@ def _default_stock_codes() -> list[str]:
     for code in load_target_stocks():
         if (data_root / f"{code}_daily.parquet").exists() or (data_root / f"{code}_1y.parquet").exists():
             available.append(code)
-    return available[:5] if available else ["600519", "000001", "300750", "601318", "300059"]
+    return available[:5] if available else ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]
 
 
 def _equal_weights(stock_codes: list[str]) -> dict[str, float]:
@@ -379,8 +386,11 @@ def _build_output_summary(
     evidence_status = compute_evidence_status(evidence_count, critic_payload.get("warnings") and "low" or None)
     data_freshness = compute_data_freshness(evidence_payload.get("latest_evidence_date"))
     action_boundary = classify_action_boundary(
-        intent="DAILY_REPORT", critic_status=critic_status, conflict_detected=conflict_detected,
-        risk_status=risk_status, evidence_count=evidence_count,
+        intent="DAILY_REPORT",
+        critic_status=critic_status,
+        conflict_detected=conflict_detected,
+        risk_status=risk_status,
+        evidence_count=evidence_count,
         critic_recommended=critic_payload.get("recommended_action_boundary"),
     )
     return {
@@ -394,7 +404,6 @@ def _build_output_summary(
         "risk_level": risk_status,
         "attempts": attempts,
         "collaboration_agents": collaboration_agents,
-        # Ethics fields
         "evidence_status": evidence_status,
         "freshness_status": data_freshness,
         "conflict_detected": conflict_detected,
@@ -437,7 +446,7 @@ def _build_weekly_evidence_payload(
         evidence_pack.append(
             {
                 "evidence_id": f"DR{index:03d}",
-                "title": f"日报归档 {report['report_date']}",
+                "title": f"Daily archive {report['report_date']}",
                 "source": "daily_report_archive",
                 "published_at": report["report_date"],
                 "snippet": _extract_summary_preview(report["full_content"]),
@@ -468,18 +477,21 @@ def _extract_summary_preview(content: str) -> str:
         lines.append(stripped)
         if len(lines) == 3:
             break
-    return " | ".join(lines) if lines else "暂无摘要"
+    return " | ".join(lines) if lines else "No archived summary available."
 
 
 def _build_weekly_synthesis(archived_reports: list[dict], week_start: date, week_end: date) -> str:
     if not archived_reports:
-        return f"{week_start.isoformat()} 至 {week_end.isoformat()} 未找到已归档日报。"
+        return (
+            f"No archived daily reports were found between "
+            f"{week_start.isoformat()} and {week_end.isoformat()}."
+        )
 
     report_dates = [report["report_date"] for report in archived_reports]
     return (
-        f"本周周报基于 {len(archived_reports)} 份已归档日报汇总生成，"
-        f"覆盖区间 {week_start.isoformat()} 至 {week_end.isoformat()}，"
-        f"已纳入日报日期：{', '.join(report_dates)}。"
+        f"This weekly report is synthesized from {len(archived_reports)} archived daily reports "
+        f"covering {week_start.isoformat()} to {week_end.isoformat()}. "
+        f"Included archive dates: {', '.join(report_dates)}."
     )
 
 
@@ -488,9 +500,9 @@ def _build_weekly_style_rotation(quant_payload: dict) -> str:
     bullish = [item["name"] for item in stocks if item.get("ma_signal") == "bullish"]
     bearish = [item["name"] for item in stocks if item.get("ma_signal") == "bearish"]
     if bullish and bearish:
-        return f"偏强：{', '.join(bullish[:3])}；偏弱：{', '.join(bearish[:3])}"
+        return f"Leadership: {', '.join(bullish[:3])}; Weakness: {', '.join(bearish[:3])}"
     if bullish:
-        return f"偏强：{', '.join(bullish[:3])}"
+        return f"Leadership: {', '.join(bullish[:3])}"
     if bearish:
-        return f"偏弱：{', '.join(bearish[:3])}"
-    return "暂无明显风格切换"
+        return f"Weakness: {', '.join(bearish[:3])}"
+    return "No meaningful leadership rotation was detected in the tracked universe."

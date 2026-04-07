@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,14 +12,7 @@ from services.common.paths import resolve_project_path
 from services.common.stocks import load_target_stocks
 
 from . import config
-from .akshare_fetcher import get_latest_close
-
-_FALSE_LIKE = {"", "--", "nan", "none", "null", "false", "False", "不适用"}
-_UNIT_MULTIPLIERS = {
-    "万亿": 1_000_000_000_000,
-    "亿": 100_000_000,
-    "万": 10_000,
-}
+from .market_fetcher import get_latest_close
 
 
 @dataclass(slots=True)
@@ -75,10 +67,10 @@ def load_fundamental_snapshot(
 
     if not config.ENABLE_LIVE_FUNDAMENTAL_FETCH:
         return cached
-    if not force_refresh and cached and not fetch_if_missing:
-        return cached
     if cached is None and not fetch_if_missing:
         return None
+    if cached is not None and not force_refresh and not fetch_if_missing:
+        return cached
 
     try:
         snapshot = fetch_fundamental_snapshot(code)
@@ -87,82 +79,98 @@ def load_fundamental_snapshot(
 
     if snapshot is None:
         return cached
-
     _save_snapshot(snapshot)
     return snapshot
 
 
 def fetch_fundamental_snapshot(code: str) -> FundamentalSnapshot | None:
-    import akshare as ak
-
-    target_stocks = load_target_stocks()
-    stock_item = target_stocks.get(code, {})
-
-    info_map: dict[str, Any] = {}
     try:
-        info_df = ak.stock_individual_info_em(symbol=code)
-        info_map = _frame_to_item_map(info_df)
-    except Exception:
-        info_map = {}
+        import yfinance as yf
+    except ImportError as exc:
+        raise RuntimeError("yfinance is required for live U.S. fundamental fetches") from exc
 
-    latest_row: dict[str, Any] = {}
-    try:
-        financial_df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
-        latest_row = _latest_report_row(financial_df)
-    except Exception:
-        latest_row = {}
-    if not latest_row:
-        try:
-            financial_df = ak.stock_financial_analysis_indicator_em(symbol=_with_exchange_suffix(code), indicator="按报告期")
-            latest_row = _latest_report_row(financial_df)
-        except Exception:
-            latest_row = {}
-
-    if not info_map and not latest_row:
+    ticker = code.upper()
+    stock_item = load_target_stocks().get(ticker, {})
+    info = yf.Ticker(ticker).info or {}
+    if not info:
         return None
 
-    report_period = _clean_str(latest_row.get("报告期") or latest_row.get("REPORT_DATE"))
-    close_price = _coerce_number(info_map.get("最新")) or get_latest_close(code)
-    eps_latest = _coerce_number(latest_row.get("基本每股收益") or latest_row.get("EPSJB"))
-    eps_ttm = _annualize_eps(eps_latest, report_period)
-    book_value_per_share = _coerce_number(latest_row.get("每股净资产") or latest_row.get("BPS"))
+    current_price = _coerce_number(
+        info.get("currentPrice")
+        or info.get("regularMarketPrice")
+        or info.get("previousClose")
+        or get_latest_close(ticker)
+    )
+    market_cap = _coerce_number(info.get("marketCap"))
+    shares_outstanding = _coerce_number(info.get("sharesOutstanding"))
+    float_shares = _coerce_number(info.get("floatShares")) or shares_outstanding
+    float_market_cap = (current_price * float_shares) if current_price and float_shares else market_cap
 
-    pe_ttm = round(close_price / eps_ttm, 4) if close_price and eps_ttm and eps_ttm > 0 else None
-    pb = (
-        round(close_price / book_value_per_share, 4)
-        if close_price and book_value_per_share and book_value_per_share > 0
-        else None
+    balance_sheet = _read_statement(getattr(yf.Ticker(ticker), "balance_sheet", None))
+    cashflow = _read_statement(getattr(yf.Ticker(ticker), "cashflow", None))
+    data_date = _normalize_date(
+        info.get("mostRecentQuarter")
+        or _statement_date(balance_sheet)
+        or _statement_date(cashflow)
     )
 
-    name = _clean_str(info_map.get("股票简称")) or str(stock_item.get("name") or code)
-    industry = _clean_str(info_map.get("行业")) or str(stock_item.get("industry") or "") or None
+    total_assets = _extract_statement_value(balance_sheet, ["Total Assets", "TotalAssets"])
+    current_assets = _extract_statement_value(balance_sheet, ["Current Assets", "CurrentAssets"])
+    current_liabilities = _extract_statement_value(balance_sheet, ["Current Liabilities", "CurrentLiabilities"])
+    cash_and_equivalents = _extract_statement_value(
+        balance_sheet,
+        ["Cash And Cash Equivalents", "CashAndCashEquivalents", "Cash"],
+    )
+    receivables = _extract_statement_value(balance_sheet, ["Receivables", "Accounts Receivable"])
+    short_term_investments = _extract_statement_value(
+        balance_sheet,
+        ["Other Short Term Investments", "ShortTermInvestments"],
+    )
+    total_debt = _coerce_number(info.get("totalDebt")) or _extract_statement_value(balance_sheet, ["Total Debt", "TotalDebt"])
+    operating_cash_flow = _extract_statement_value(
+        cashflow,
+        ["Operating Cash Flow", "OperatingCashFlow", "Total Cash From Operating Activities"],
+    )
+
+    roe = _normalize_ratio(info.get("returnOnEquity"))
+    gross_margin = _normalize_ratio(info.get("grossMargins"))
+    net_margin = _normalize_ratio(info.get("profitMargins"))
+    revenue_growth = _normalize_ratio(info.get("revenueGrowth"))
+    net_profit_growth = _normalize_ratio(info.get("earningsGrowth"))
+    debt_to_asset = _safe_percent(total_debt, total_assets)
+    current_ratio = _safe_ratio(current_assets, current_liabilities)
+    quick_assets = None
+    if any(value is not None for value in [cash_and_equivalents, receivables, short_term_investments]):
+        quick_assets = (cash_and_equivalents or 0.0) + (receivables or 0.0) + (short_term_investments or 0.0)
+    quick_ratio = _safe_ratio(quick_assets, current_liabilities)
+    operating_cashflow_per_share = _safe_ratio(operating_cash_flow, shares_outstanding)
 
     return FundamentalSnapshot(
-        code=code,
-        name=name,
-        industry=industry,
-        report_period=report_period,
-        data_date=_normalize_report_period(report_period),
+        code=ticker,
+        name=str(stock_item.get("name") or info.get("shortName") or info.get("longName") or ticker),
+        industry=str(stock_item.get("industry") or info.get("industry") or "").strip() or None,
+        report_period=data_date,
+        data_date=data_date,
         fetched_at=datetime.now().isoformat(timespec="seconds"),
-        close_price=close_price,
-        market_cap=_coerce_number(info_map.get("总市值")),
-        float_market_cap=_coerce_number(info_map.get("流通市值")),
-        pe_ttm=pe_ttm,
-        pb=pb,
-        eps_ttm=eps_ttm,
-        eps_latest=eps_latest,
-        book_value_per_share=book_value_per_share,
-        operating_cashflow_per_share=_coerce_number(latest_row.get("每股经营现金流") or latest_row.get("PER_NETCASH")),
-        roe=_coerce_number(latest_row.get("净资产收益率") or latest_row.get("ROE_DILUTED")),
-        gross_margin=_coerce_number(latest_row.get("销售毛利率") or latest_row.get("GROSS_PROFIT_RATIO")),
-        net_margin=_coerce_number(latest_row.get("销售净利率") or latest_row.get("NET_PROFIT_RATIO")),
-        revenue_growth=_coerce_number(latest_row.get("营业总收入同比增长率") or latest_row.get("TOTALOPERATEREVETZ")),
-        net_profit_growth=_coerce_number(latest_row.get("净利润同比增长率") or latest_row.get("PARENTNETPROFITTZ")),
-        debt_to_asset=_coerce_number(latest_row.get("资产负债率")),
-        current_ratio=_coerce_number(latest_row.get("流动比率")),
-        quick_ratio=_coerce_number(latest_row.get("速动比率")),
-        source="akshare_financial_snapshot",
-        valuation_method="derived_from_latest_price_and_financial_abstract",
+        close_price=current_price,
+        market_cap=market_cap,
+        float_market_cap=float_market_cap,
+        pe_ttm=_coerce_number(info.get("trailingPE")),
+        pb=_coerce_number(info.get("priceToBook")),
+        eps_ttm=_coerce_number(info.get("trailingEps")),
+        eps_latest=_coerce_number(info.get("currentEps") or info.get("trailingEps")),
+        book_value_per_share=_coerce_number(info.get("bookValue")),
+        operating_cashflow_per_share=operating_cashflow_per_share,
+        roe=roe,
+        gross_margin=gross_margin,
+        net_margin=net_margin,
+        revenue_growth=revenue_growth,
+        net_profit_growth=net_profit_growth,
+        debt_to_asset=debt_to_asset,
+        current_ratio=current_ratio,
+        quick_ratio=quick_ratio,
+        source="yfinance_fundamental_snapshot",
+        valuation_method="yfinance_info_and_statement_snapshot",
     )
 
 
@@ -259,7 +267,7 @@ def load_industry_peer_snapshots(
             snapshots.append(snapshot)
 
     if fetch_missing and config.ENABLE_LIVE_FUNDAMENTAL_FETCH:
-        for peer_code in missing_codes[: max_peers or len(missing_codes)]:
+        for peer_code in missing_codes:
             snapshot = load_fundamental_snapshot(peer_code, fetch_if_missing=True)
             if snapshot is not None:
                 snapshots.append(snapshot)
@@ -267,7 +275,7 @@ def load_industry_peer_snapshots(
 
 
 def _load_cached_snapshot(code: str) -> FundamentalSnapshot | None:
-    path = financial_data_dir() / f"{code}.json"
+    path = financial_data_dir() / f"{code.upper()}.json"
     if not path.exists():
         return None
     try:
@@ -280,7 +288,7 @@ def _load_cached_snapshot(code: str) -> FundamentalSnapshot | None:
 def _save_snapshot(snapshot: FundamentalSnapshot) -> None:
     root = financial_data_dir()
     root.mkdir(parents=True, exist_ok=True)
-    path = root / f"{snapshot.code}.json"
+    path = root / f"{snapshot.code.upper()}.json"
     path.write_text(json.dumps(snapshot.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -292,65 +300,61 @@ def _is_stale(snapshot: FundamentalSnapshot) -> bool:
     return fetched_at < datetime.now() - timedelta(hours=config.FUNDAMENTAL_CACHE_HOURS)
 
 
-def _frame_to_item_map(df: pd.DataFrame) -> dict[str, Any]:
-    if df.empty:
-        return {}
-    item_column = next((column for column in ["item", "指标", "项目"] if column in df.columns), None)
-    value_column = next((column for column in ["value", "值", "最新值"] if column in df.columns), None)
-    if item_column is None or value_column is None:
-        return {}
-    return {
-        _clean_str(row[item_column]): row[value_column]
-        for _, row in df.iterrows()
-        if _clean_str(row[item_column])
-    }
+def _read_statement(statement: Any) -> pd.DataFrame:
+    if isinstance(statement, pd.DataFrame):
+        return statement
+    return pd.DataFrame()
 
 
-def _latest_report_row(df: pd.DataFrame) -> dict[str, Any]:
-    if df.empty or "报告期" not in df.columns:
-        return {}
-    ranked = df.copy()
-    ranked["_sort_key"] = ranked["报告期"].map(_normalize_report_period)
-    ranked = ranked.dropna(subset=["_sort_key"]).sort_values("_sort_key")
-    if ranked.empty:
-        return {}
-    latest = ranked.iloc[-1].drop(labels=["_sort_key"])
-    return latest.to_dict()
-
-
-def _annualize_eps(eps_latest: float | None, report_period: str | None) -> float | None:
-    if eps_latest is None or eps_latest <= 0:
+def _statement_date(statement: pd.DataFrame) -> str | None:
+    if statement.empty:
         return None
-    return round(eps_latest * _report_period_factor(report_period), 4)
+    latest_column = next(iter(statement.columns), None)
+    return _normalize_date(latest_column)
 
 
-def _report_period_factor(report_period: str | None) -> float:
-    normalized = _normalize_report_period(report_period)
-    if normalized is None:
-        return 1.0
-    month_day = normalized[5:]
-    if month_day == "03-31":
-        return 4.0
-    if month_day == "06-30":
-        return 2.0
-    if month_day == "09-30":
-        return 4.0 / 3.0
-    return 1.0
-
-
-def _normalize_report_period(value: Any) -> str | None:
-    text = _clean_str(value)
-    if not text:
+def _extract_statement_value(statement: pd.DataFrame, candidates: list[str]) -> float | None:
+    if statement.empty:
         return None
-    if re.fullmatch(r"\d{4}", text):
-        return f"{text}-12-31"
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
-        return text
-    if re.fullmatch(r"\d{4}/\d{2}/\d{2}", text):
-        return text.replace("/", "-")
-    if re.fullmatch(r"\d{8}", text):
-        return f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
+    for candidate in candidates:
+        if candidate in statement.index:
+            series = statement.loc[candidate]
+            if isinstance(series, pd.Series):
+                return _coerce_number(series.iloc[0])
+            return _coerce_number(series)
     return None
+
+
+def _normalize_date(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, pd.Timestamp):
+            return value.date().isoformat()
+        return pd.Timestamp(value).date().isoformat()
+    except Exception:
+        text = str(value).strip()
+        return text[:10] if len(text) >= 10 else None
+
+
+def _normalize_ratio(value: Any) -> float | None:
+    numeric = _coerce_number(value)
+    if numeric is None:
+        return None
+    if -1.0 <= numeric <= 1.0:
+        numeric *= 100
+    return round(numeric, 4)
+
+
+def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator in {None, 0}:
+        return None
+    return round(float(numerator) / float(denominator), 4)
+
+
+def _safe_percent(numerator: float | None, denominator: float | None) -> float | None:
+    ratio = _safe_ratio(numerator, denominator)
+    return round(ratio * 100, 4) if ratio is not None else None
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -358,59 +362,28 @@ def _coerce_number(value: Any) -> float | None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
-
-    text = _clean_str(value)
-    if not text or text in _FALSE_LIKE:
+    text = str(value).replace(",", "").strip()
+    if not text:
         return None
-
-    multiplier = 1.0
-    for unit, unit_multiplier in _UNIT_MULTIPLIERS.items():
-        if text.endswith(unit):
-            multiplier = float(unit_multiplier)
-            text = text[: -len(unit)]
-            break
-
-    is_percent = text.endswith("%")
-    if is_percent:
-        text = text[:-1]
-
-    text = text.replace(",", "")
     try:
-        number = float(text)
+        return float(text)
     except ValueError:
         return None
-    return number if is_percent else number * multiplier
-
-
-def _clean_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _median(values: list[float]) -> float:
     if not values:
         return 0.0
-    ordered = sorted(values)
-    middle = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2
+    values = sorted(values)
+    mid = len(values) // 2
+    if len(values) % 2 == 1:
+        return values[mid]
+    return (values[mid - 1] + values[mid]) / 2
 
 
-def _relative_label(value: float, avg_value: float, lower_is_better: bool) -> str:
-    if avg_value == 0:
-        return "in_line"
-    delta_ratio = (value - avg_value) / abs(avg_value)
-    if abs(delta_ratio) <= 0.05:
-        return "in_line"
+def _relative_label(stock_value: float, industry_avg: float, lower_is_better: bool) -> str:
+    if abs(stock_value - industry_avg) <= max(abs(industry_avg) * 0.05, 0.1):
+        return "in_line_with_industry"
     if lower_is_better:
-        return "better_than_industry" if value < avg_value else "worse_than_industry"
-    return "better_than_industry" if value > avg_value else "worse_than_industry"
-
-
-def _with_exchange_suffix(code: str) -> str:
-    if code.startswith(("5", "6", "9")):
-        return f"{code}.SH"
-    return f"{code}.SZ"
+        return "better_than_industry" if stock_value < industry_avg else "worse_than_industry"
+    return "better_than_industry" if stock_value > industry_avg else "worse_than_industry"

@@ -17,7 +17,7 @@ _GRAPH_REPO = GraphRepository(metadata_dir() / "graph_manifest.json")
 
 
 def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_scenarios: bool) -> dict:
-    weights = {item["code"]: float(item["weight"]) for item in portfolio}
+    weights = {item["code"].upper(): float(item["weight"]) for item in portfolio}
     total_weight = sum(weights.values())
     returns = portfolio_returns(weights, lookback_days=lookback_days)
     peer_benchmark = benchmark_returns(
@@ -28,9 +28,9 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
 
     alerts = []
     if total_weight > 1.01:
-        alerts.append(f"组合总权重为 {total_weight:.2f}，超过 1.00，请检查持仓输入。")
+        alerts.append(f"Portfolio weights sum to {total_weight:.2f}, above 1.00.")
     elif total_weight < 0.99:
-        alerts.append(f"组合总权重为 {total_weight:.2f}，低于 1.00，当前结果基于未满仓组合估算。")
+        alerts.append(f"Portfolio weights sum to {total_weight:.2f}, below 1.00.")
 
     if returns.empty:
         return {
@@ -40,7 +40,7 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
             "beta": None,
             "top_industry_exposure": None,
             "industry_breakdown": [],
-            "alerts": alerts + ["未找到可用的历史行情数据，风险结果仅返回空壳结构。"],
+            "alerts": alerts + ["No usable market history was available for the requested portfolio."],
             "scenario_loss_estimate": {},
             "generated_at": datetime.now(UTC).isoformat(),
         }
@@ -56,20 +56,21 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
     top_industry = industry_breakdown[0] if industry_breakdown else None
     if top_industry and top_industry["weight"] >= 0.4:
         alerts.append(
-            f"行业集中度偏高，{top_industry['industry']} 权重达到 {top_industry['weight']:.2%}。"
+            f"Industry concentration is elevated: {top_industry['industry']} at {top_industry['weight']:.2%}."
         )
     if max_drawdown <= -0.15:
-        alerts.append(f"最近 {lookback_days} 日最大回撤达到 {max_drawdown:.2%}。")
+        alerts.append(f"Maximum drawdown over {lookback_days} days reached {max_drawdown:.2%}.")
     if volatility >= 0.3:
-        alerts.append(f"组合年化波动率为 {volatility:.2%}，处于偏高水平。")
+        alerts.append(f"Annualized volatility is elevated at {volatility:.2%}.")
 
     scenario_loss = _scenario_losses(max_drawdown, volatility, beta, run_scenarios)
     risk_level = _risk_level(max_drawdown, volatility, top_industry["weight"] if top_industry else 0.0)
     risk_date = datetime.now().date().isoformat()
+    stock_map = load_target_stocks()
     for item in portfolio:
-        code = item["code"]
+        code = item["code"].upper()
         weight = float(item["weight"])
-        entity_name = str(load_target_stocks().get(code, {}).get("name") or code)
+        entity_name = str(stock_map.get(code, {}).get("name") or code)
         _GRAPH_REPO.save_risk_snapshot(
             entity_key=code,
             entity_name=entity_name,
@@ -104,7 +105,7 @@ def risk_check(portfolio: list[dict], benchmark: str, lookback_days: int, run_sc
 
 
 def drawdown_analysis(stock_codes: list[str], lookback_days: int) -> dict:
-    results = [compute_drawdown_metrics(code, lookback_days=lookback_days) for code in stock_codes]
+    results = [compute_drawdown_metrics(code.upper(), lookback_days=lookback_days) for code in stock_codes]
     risk_date = datetime.now().date().isoformat()
     stock_map = load_target_stocks()
     for item in results:
@@ -126,7 +127,7 @@ def _industry_breakdown(weights: dict[str, float]) -> list[dict]:
     stock_map = load_target_stocks()
     exposures: dict[str, float] = {}
     for code, weight in weights.items():
-        industry = str(stock_map.get(code, {}).get("industry") or "未知行业")
+        industry = str(stock_map.get(code, {}).get("industry") or "Unknown Industry")
         exposures[industry] = exposures.get(industry, 0.0) + weight
     ranked = sorted(exposures.items(), key=lambda item: item[1], reverse=True)
     return [{"industry": industry, "weight": round(weight, 4)} for industry, weight in ranked]
@@ -153,9 +154,9 @@ def _scenario_losses(max_drawdown: float, volatility: float, beta: float | None,
     medium = max(abs(max_drawdown) * 1.2, volatility * 1.2, 0.05) * beta_multiplier
     mild = max(abs(max_drawdown) * 0.8, volatility * 0.8, 0.03) * beta_multiplier
     return {
-        "2015_crash": round(-severe, 4),
-        "2018_trade_war": round(-medium, 4),
-        "2022_russia_ukraine": round(-mild, 4),
+        "dotcom_style_shock": round(-severe, 4),
+        "covid_style_shock": round(-medium, 4),
+        "rate_shock": round(-mild, 4),
     }
 
 

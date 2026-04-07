@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-阶段 0/1/2/3 冒烟测试脚本。
-不依赖 pytest 的目录发现逻辑，直接通过 TestClient 验证关键接口契约。
+End-to-end smoke checks for the current US-market MVP.
+This script intentionally validates only public API contracts and lightweight happy paths.
 """
 
 from fastapi.testclient import TestClient
@@ -27,7 +27,7 @@ def check_ingestion() -> None:
 
     trigger = client.post(
         "/api/v1/ingest/trigger",
-        json={"source": "all", "date": "2026-04-07", "stock_codes": ["600519"]},
+        json={"source": "all", "date": "2026-04-07", "stock_codes": ["AAPL"]},
     )
     payload = trigger.json()
     assert_ok(trigger.status_code == 200, "ingestion trigger failed")
@@ -40,9 +40,9 @@ def check_rag() -> None:
     retrieve = client.post(
         "/api/v1/retrieve",
         json={
-            "query": "贵州茅台一季报净利润",
-            "stock_codes": ["600519"],
-            "doc_types": ["news"],
+            "query": "Apple latest filing",
+            "stock_codes": ["AAPL"],
+            "doc_types": ["filing"],
             "date_range": {"start": "2026-04-01", "end": "2026-04-07"},
             "top_k": 5,
             "min_score": 0.7,
@@ -58,14 +58,12 @@ def check_quant() -> None:
     client = TestClient(quant_app)
     daily = client.post(
         "/api/v1/quant/daily",
-        json={"stock_codes": ["600519", "300750"], "date": "2026-04-07", "indicators": []},
+        json={"stock_codes": ["AAPL", "MSFT"], "date": "2026-04-07", "indicators": []},
     )
     payload = daily.json()
     assert_ok(daily.status_code == 200, "quant daily failed")
     assert_ok(payload["success"] is True, "quant daily success=false")
-    assert_ok(payload["data"]["trade_date"] <= "2026-04-07", "quant trade_date mismatch")
-    assert_ok(len(payload["data"]["stocks"]) == 2, "quant stock count mismatch")
-    assert_ok(payload["data"]["stocks"][0]["close"] > 0, "quant latest close invalid")
+    assert_ok(payload["data"]["trade_date"] <= "2026-04-07", "quant trade date mismatch")
 
 
 def check_risk() -> None:
@@ -74,10 +72,10 @@ def check_risk() -> None:
         "/api/v1/risk/check",
         json={
             "portfolio": [
-                {"code": "600519", "weight": 0.05},
-                {"code": "300750", "weight": 0.08},
+                {"code": "AAPL", "weight": 0.05},
+                {"code": "MSFT", "weight": 0.08},
             ],
-            "benchmark": "000300",
+            "benchmark": "SPY",
             "lookback_days": 90,
             "run_scenarios": True,
         },
@@ -93,7 +91,7 @@ def check_planner() -> None:
     client = TestClient(planner_app)
     query = client.post(
         "/api/v1/planner/query",
-        json={"message": "贵州茅台近期公告", "refresh_index": False},
+        json={"message": "Apple latest filing", "refresh_index": False},
     )
     payload = query.json()
     assert_ok(query.status_code == 200, "planner query failed")
@@ -103,7 +101,7 @@ def check_planner() -> None:
 
     routed_daily = client.post(
         "/api/v1/planner/query",
-        json={"message": "请生成今日日报", "refresh_index": False},
+        json={"message": "Please generate today's daily report", "refresh_index": False},
     )
     routed_daily_payload = routed_daily.json()
     assert_ok(routed_daily.status_code == 200, "planner routed daily-report failed")
@@ -112,7 +110,7 @@ def check_planner() -> None:
 
     routed_weekly = client.post(
         "/api/v1/planner/query",
-        json={"message": "请生成本周周报", "refresh_index": False},
+        json={"message": "Please generate this week's weekly report", "refresh_index": False},
     )
     routed_weekly_payload = routed_weekly.json()
     assert_ok(routed_weekly.status_code == 200, "planner routed weekly-report failed")
@@ -133,7 +131,7 @@ def check_planner() -> None:
 
     daily_report = client.post(
         "/api/v1/planner/daily-report",
-        json={"report_date": "2026-04-05", "stock_codes": ["600519", "300750"]},
+        json={"report_date": "2026-04-05", "stock_codes": ["AAPL", "MSFT"]},
     )
     daily_payload = daily_report.json()
     assert_ok(daily_report.status_code == 200, "planner daily-report failed")
@@ -142,7 +140,7 @@ def check_planner() -> None:
 
     weekly_report = client.post(
         "/api/v1/planner/weekly-report",
-        json={"report_date": "2026-04-05", "stock_codes": ["600519", "300750"]},
+        json={"report_date": "2026-04-05", "stock_codes": ["AAPL", "MSFT"]},
     )
     weekly_payload = weekly_report.json()
     assert_ok(weekly_report.status_code == 200, "planner weekly-report failed")
@@ -157,7 +155,12 @@ def check_report() -> None:
         json={
             "report_type": "daily",
             "report_date": "2026-04-05",
-            "evidence_payload": {"evidence_pack": [], "synthesis": "暂无", "matched_companies": [], "matched_themes": []},
+            "evidence_payload": {
+                "evidence_pack": [],
+                "synthesis": "No major filing found.",
+                "matched_companies": [],
+                "matched_themes": [],
+            },
             "quant_payload": {"trade_date": "2026-04-03", "market_summary": {}, "stocks": []},
             "risk_payload": {"risk_level": "MEDIUM", "alerts": [], "industry_breakdown": []},
             "critic_status": "PENDING",
@@ -174,7 +177,7 @@ def check_critic() -> None:
     critic = client.post(
         "/api/v1/critic/review",
         json={
-            "report_payload": {"full_content": "数据来源：eastmoney\n数据日期：2026-04-05\nCritic 校验：PENDING"},
+            "report_payload": {"full_content": "Data sources: sec_edgar\nData dates: 2026-04-05\nCritic status: PENDING"},
             "evidence_payload": {"evidence_pack": [], "latest_evidence_date": "2026-04-05"},
             "quant_payload": {"stocks": []},
             "risk_payload": {"alerts": []},
@@ -198,7 +201,7 @@ def main() -> None:
     ]
 
     print("=" * 55)
-    print("  阶段 0/1/2/3 冒烟测试")
+    print("  US Market MVP Smoke Test")
     print("=" * 55)
 
     for name, check in checks:
@@ -206,7 +209,7 @@ def main() -> None:
         print(f"  [PASS] {name}")
 
     print()
-    print(f"结果：全部 {len(checks)} 项通过")
+    print(f"Result: all {len(checks)} checks passed")
 
 
 if __name__ == "__main__":

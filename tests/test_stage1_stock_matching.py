@@ -5,15 +5,17 @@ from services.common.stocks import (
 )
 
 
-def test_normalize_company_term_strips_corporate_suffix():
-    assert normalize_company_term("湖北兴发化工集团股份有限公司") == "湖北兴发化工"
-    assert normalize_company_term("兴发集团") == "兴发"
+def test_normalize_company_term_strips_us_corporate_suffix():
+    assert normalize_company_term("Apple Inc.") == "apple"
+    assert normalize_company_term("Microsoft Corporation") == "microsoft"
 
 
 def test_extract_company_terms_supports_non_pool_company():
-    assert extract_company_terms("兴发集团利润分配预案公告") == ["兴发集团", "兴发"]
+    terms = extract_company_terms("Palantir Technologies earnings update")
+    assert terms[0] == "Palantir Technologies"
+    assert "Palantir" in terms
 
 
 def test_matches_company_terms_uses_normalized_company_name():
-    text = "湖北兴发化工集团股份有限公司关于2025年度利润分配预案的公告"
-    assert matches_company_terms(text, ["兴发集团"])
+    text = "Apple Inc. filed its latest annual report with the SEC."
+    assert matches_company_terms(text, ["Apple"])
