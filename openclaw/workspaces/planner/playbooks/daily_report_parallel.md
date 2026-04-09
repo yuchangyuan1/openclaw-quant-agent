@@ -10,5 +10,5 @@
 5. Only after critic review should planner deliver the final summary.
 6. If one parallel branch fails, report the degraded branch explicitly instead of pretending the whole pipeline succeeded.
 7. Read `action_boundary` and `human_approval_required` from the final planner response.
-8. If `human_approval_required` is true, prefix the Feishu summary with: 【⚠ 需要人工审批后方可执行任何操作】
+8. If `human_approval_required` is true, prefix the Feishu summary with: `[Human approval required before any action is taken]`
 9. Always include `action_boundary`, `human_approval_required`, and `accountability_trail` in the delivered response.

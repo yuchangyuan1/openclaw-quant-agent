@@ -35,5 +35,5 @@ Execution rules:
 - Do not add extra suggestions or self-generated follow-up text after `reply_markdown`.
 - If local planner service is unavailable, explicitly report service unavailability instead of claiming that RAG itself is unavailable.
 - Always enforce `action_boundary` and `human_approval_required` on all outputs.
-- If `human_approval_required` is true, prefix the Feishu response with: 【⚠ 需要人工审批后方可执行任何操作】
+- If `human_approval_required` is true, prefix the Feishu response with: `[Human approval required before any action is taken]`
 - Do not present action-oriented output as automatically authorized.

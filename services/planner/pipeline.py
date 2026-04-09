@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
@@ -676,3 +676,4 @@ def _format_graph_summary(graph_context: dict) -> str:
         f"**Graph-related industries**: {industries}\n"
         f"**Graph relations**: {relations}"
     )
+

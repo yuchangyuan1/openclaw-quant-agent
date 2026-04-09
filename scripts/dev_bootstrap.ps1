@@ -47,6 +47,11 @@ if (-not $SkipSampleData) {
     Invoke-Checked -StepName "fetch_sample_data" -Action {
         python (Join-Path $ProjectRoot "scripts\fetch_sample_data.py")
     }
+
+    Write-Host "[step] Fetching sample SEC filings"
+    Invoke-Checked -StepName "fetch_sample_filings" -Action {
+        python (Join-Path $ProjectRoot "scripts\fetch_sample_filings.py")
+    }
 }
 
 Write-Host "[step] Verifying infrastructure"
@@ -71,7 +76,7 @@ if ($SyncOpenClaw) {
 if ($StartServices) {
     Write-Host "[step] Starting local API services"
     Invoke-Checked -StepName "dev_up" -Action {
-        powershell -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\dev_up.ps1")
+        powershell -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\dev_up.ps1") -EnableLocalProcesses
     }
 }
 

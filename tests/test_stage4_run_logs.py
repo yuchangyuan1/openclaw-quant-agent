@@ -25,9 +25,10 @@ def test_call_with_retry_retries_once_before_success():
 def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
     monkeypatch.setenv("RUN_LOG_MANIFEST_PATH", str(tmp_path / "run_logs.json"))
+    captured = {}
     monkeypatch.setattr(
         "services.planner.report_pipeline.run_knowledge_agent",
-        lambda **_kwargs: type(
+        lambda **kwargs: captured.update(kwargs) or type(
             "KnowledgeResult",
             (),
             {
@@ -78,6 +79,7 @@ def test_execute_daily_report_writes_run_log_manifest(tmp_path, monkeypatch):
     assert manifest[0]["status"] == "success"
     assert manifest[0]["output_summary"]["report_type"] == "daily"
     assert manifest[0]["output_summary"]["collaboration_agents"] == ["planner", "knowledge", "quant", "risk", "report", "critic"]
+    assert captured["question"] == "Latest SEC filings and public updates for Apple (AAPL)"
 
 
 def test_planner_run_logs_endpoint_returns_recent_runs(tmp_path, monkeypatch):

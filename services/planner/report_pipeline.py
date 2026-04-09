@@ -71,7 +71,7 @@ def execute_daily_report(report_date: str | None = None, stock_codes: list[str] 
         initial_results = run_parallel_collaboration(
             {
                 "knowledge": lambda: run_knowledge_agent(
-                    question="Latest SEC filings and public updates for the Magnificent 7",
+                    question=_build_daily_report_question(selected_codes),
                     stock_codes=selected_codes,
                     doc_types=["filing"],
                     days=7,
@@ -358,6 +358,19 @@ def _equal_weights(stock_codes: list[str]) -> dict[str, float]:
     drift = round(1 - sum(weights.values()), 4)
     weights[stock_codes[0]] = round(weights[stock_codes[0]] + drift, 4)
     return weights
+
+
+def _build_daily_report_question(stock_codes: list[str]) -> str:
+    stocks = load_target_stocks()
+    labels = []
+    for code in stock_codes:
+        item = stocks.get(code)
+        if item:
+            labels.append(f"{item['name']} ({code})")
+        else:
+            labels.append(code)
+    focus = ", ".join(labels) if labels else "the default tracked U.S. equity universe"
+    return f"Latest SEC filings and public updates for {focus}"
 
 
 def _run_step(func: Callable[[], Any], attempts: int = 2) -> tuple[Any, int]:
